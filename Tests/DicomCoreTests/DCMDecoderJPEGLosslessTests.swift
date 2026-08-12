@@ -249,7 +249,6 @@ final class DCMDecoderJPEGLosslessTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(decoder.bitDepth, bitDepth, "Bit depth should be at least 16")
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testLoadJPEGLosslessDICOMFileAsync() async throws {
         let width = 1
         let height = 1
@@ -657,7 +656,6 @@ final class DCMDecoderJPEGLosslessTests: XCTestCase {
 
     // MARK: - Concurrent Access Tests
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testConcurrentFileLoading() async throws {
         let width = 4
         let height = 4

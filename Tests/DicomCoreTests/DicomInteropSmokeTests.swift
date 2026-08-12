@@ -62,7 +62,7 @@ final class DicomInteropSmokeTests: XCTestCase {
         }
     }
 
-    func testQA03Issue281DIMSESmokeEchoStoreFindRetrieveAndStorageSCP() throws {
+    func test_dimseSmokeEchoStoreFindRetrieveAndStorageSCP_runsConfiguredOperations() async throws {
         let fixture = try fixture()
         let archives = try configuredArchives().filter { $0.hasDIMSE }
         guard !archives.isEmpty else {
@@ -90,7 +90,7 @@ final class DicomInteropSmokeTests: XCTestCase {
             }
 
             if archive.capabilities.contains(.dimseFind) {
-                let result = try retrying("C-FIND \(archive.id)") {
+                let result = try retrying("C-FIND \(archive.id)", delay: 1) {
                     try service.find(identifier: studyQuery(patientID: fixture.patientID))
                 } until: { result in
                     result.matches.contains { $0.string(for: .studyInstanceUID) == fixture.studyInstanceUID }
@@ -110,7 +110,7 @@ final class DicomInteropSmokeTests: XCTestCase {
             }
 
             if archive.capabilities.contains(.dimseMove) {
-                try runMoveSmoke(archive: archive, fixture: fixture, service: service)
+                try await runMoveSmoke(archive: archive, fixture: fixture, service: service)
             }
         }
     }
@@ -210,7 +210,7 @@ final class DicomInteropSmokeTests: XCTestCase {
             dimseHost: env["\(prefix)_DIMSE_HOST"],
             dimsePort: env["\(prefix)_DIMSE_PORT"].flatMap(UInt16.init),
             calledAETitle: env["\(prefix)_CALLED_AE"] ?? "ARCHIVE",
-            callingAETitle: env["\(prefix)_CALLING_AE"] ?? "DICOMSWIFT",
+            callingAETitle: env["\(prefix)_CALLING_AE"] ?? "MTKSMOKE",
             dicomWebURL: env["\(prefix)_DICOMWEB_URL"].flatMap(URL.init(string:)),
             dicomWebHeaders: bearerHeaders(token: env["\(prefix)_DICOMWEB_BEARER_TOKEN"]),
             capabilities: capabilities,
@@ -269,7 +269,7 @@ final class DicomInteropSmokeTests: XCTestCase {
         archive: InteropArchive,
         fixture: InteropFixture,
         service: DicomDIMSEServiceSCU
-    ) throws {
+    ) async throws {
         guard archive.capabilities.contains(.storageSCP) else {
             throw DicomTestRuntimePreflight.skip(
                 .networkInteropSmoke,
@@ -295,19 +295,22 @@ final class DicomInteropSmokeTests: XCTestCase {
         #if canImport(Network)
         let server = try DicomStorageSCPServer(service: scpService)
         try server.start()
-        defer {
-            server.stop()
-            try? FileManager.default.removeItem(at: storageDirectory)
-        }
+        defer { try? FileManager.default.removeItem(at: storageDirectory) }
 
-        let result = try service.move(
-            identifier: retrieveQuery(studyInstanceUID: fixture.studyInstanceUID),
-            moveDestinationAETitle: destination
-        )
-        XCTAssertEqual(result.status, 0, archive.id)
-        let storedURL = storageDirectory
-            .appendingPathComponent(DicomFileStorageCache.fileName(for: fixture.sopInstanceUID))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: storedURL.path), archive.id)
+        do {
+            let result = try service.move(
+                identifier: retrieveQuery(studyInstanceUID: fixture.studyInstanceUID),
+                moveDestinationAETitle: destination
+            )
+            XCTAssertEqual(result.status, 0, archive.id)
+            let storedURL = storageDirectory
+                .appendingPathComponent(DicomFileStorageCache.fileName(for: fixture.sopInstanceUID))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: storedURL.path), archive.id)
+            await server.stop()
+        } catch {
+            await server.stop()
+            throw error
+        }
         #else
         throw XCTSkip(DicomTestRuntimePreflight.skipMessage(for: DicomRuntimeStatus(
             capability: .networkInteropSmoke,
@@ -529,7 +532,7 @@ extension DicomInteropSmokeTests {
         try skipIfEmpty(archives, detail: "No configured archive declares C-ECHO support.")
 
         var configuration = archives[0].configuration
-        configuration.tls = DicomTLSConfiguration(mode: .enabled, securityProfile: .bcp195)
+        configuration.tls = DicomTLSConfiguration(mode: .enabled, securityProfile: .bcp195RFC8996)
         configuration.timeout = 10
         let service = DicomDIMSEServiceSCU(configuration: configuration)
 
@@ -708,7 +711,7 @@ extension DicomInteropSmokeTests {
                     host: host,
                     port: port,
                     calledAETitle: env["\(prefix)_CALLED_AE"] ?? "ARCHIVE",
-                    callingAETitle: env["\(prefix)_CALLING_AE"] ?? "DICOMSWIFT",
+                    callingAETitle: env["\(prefix)_CALLING_AE"] ?? "MTKSMOKE",
                     timeout: env["DICOM_INTEROP_TIMEOUT"].flatMap(TimeInterval.init) ?? 30
                 ),
                 capabilities: capabilities,

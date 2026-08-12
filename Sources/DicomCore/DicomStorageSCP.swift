@@ -38,7 +38,7 @@ public enum DicomStorageSOPClassUIDs {
     public static let secondaryCaptureImageStorage = DicomDataSetWriter.defaultSecondaryCaptureImageStorageSOPClassUID
     public static let positronEmissionTomographyImageStorage = "1.2.840.10008.5.1.4.1.1.128"
 
-    public static let commonClinicalStorage: Set<String> = [
+    public static let commonClinicalStorage: Set<String> = Set([
         computedRadiographyImageStorage,
         ctImageStorage,
         enhancedCTImageStorage,
@@ -54,7 +54,7 @@ public enum DicomStorageSOPClassUIDs {
         DicomParametricMap.storageSOPClassUID,
         DicomSecondaryCaptureImage.storageSOPClassUID,
         DicomGrayscalePresentationState.storageSOPClassUID
-    ]
+    ]).union(DicomSRDocument.structuredReportSOPClassUIDs)
 }
 
 public struct DicomStorageSCPConfiguration: Equatable, Sendable {
@@ -65,6 +65,7 @@ public struct DicomStorageSCPConfiguration: Equatable, Sendable {
     public var maximumPDULength: UInt32
     public var timeout: TimeInterval
     public var acceptAnyCalledAETitle: Bool
+    public var acceptOnlyIntranet: Bool
     public var enableStorageCommitment: Bool
     public var tls: DicomTLSConfiguration
 
@@ -75,6 +76,7 @@ public struct DicomStorageSCPConfiguration: Equatable, Sendable {
                 maximumPDULength: UInt32 = 16_384,
                 timeout: TimeInterval = 10,
                 acceptAnyCalledAETitle: Bool = false,
+                acceptOnlyIntranet: Bool = false,
                 enableStorageCommitment: Bool = true,
                 tls: DicomTLSConfiguration = .disabled) {
         self.aeTitle = aeTitle
@@ -84,8 +86,77 @@ public struct DicomStorageSCPConfiguration: Equatable, Sendable {
         self.maximumPDULength = maximumPDULength
         self.timeout = timeout
         self.acceptAnyCalledAETitle = acceptAnyCalledAETitle
+        self.acceptOnlyIntranet = acceptOnlyIntranet
         self.enableStorageCommitment = enableStorageCommitment
         self.tls = tls
+    }
+}
+
+enum DicomStorageSCPPeerAccess {
+    #if canImport(Network)
+    static func allows(_ endpoint: NWEndpoint, acceptOnlyIntranet: Bool) -> Bool {
+        guard acceptOnlyIntranet else { return true }
+        guard case .hostPort(let host, _) = endpoint else { return false }
+        switch host {
+        case .ipv4(let address):
+            guard address.interface == nil else { return false }
+            return isIntranetIPv4([UInt8](address.rawValue))
+        case .ipv6(let address):
+            guard address.interface == nil else { return false }
+            return isIntranetIPv6([UInt8](address.rawValue))
+        case .name:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+    #endif
+
+    static func isIntranetAddress(_ address: String) -> Bool {
+        let components = address.split(separator: ".", omittingEmptySubsequences: false)
+        if components.count == 4, !address.contains(":") {
+            let octets = components.compactMap { component -> UInt8? in
+                guard !component.isEmpty,
+                      component.allSatisfy({ $0.isASCII && $0.isNumber }),
+                      component.count == 1 || component.first != "0" else {
+                    return nil
+                }
+                return UInt8(component)
+            }
+            return octets.count == 4 && isIntranetIPv4(octets)
+        }
+
+        #if canImport(Network)
+        guard !address.contains("%") else { return false }
+        guard let ipv6 = IPv6Address(address) else { return false }
+        return isIntranetIPv6([UInt8](ipv6.rawValue))
+        #else
+        return false
+        #endif
+    }
+
+    private static func isIntranetIPv6(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == 16 else { return false }
+        if bytes.dropLast().allSatisfy({ $0 == 0 }), bytes.last == 1 {
+            return true
+        }
+        if bytes[0] & 0xFE == 0xFC {
+            return true
+        }
+        if bytes.prefix(10).allSatisfy({ $0 == 0 }), bytes[10] == 0xFF, bytes[11] == 0xFF {
+            return isIntranetIPv4(Array(bytes.suffix(4)))
+        }
+        return false
+    }
+
+    private static func isIntranetIPv4(_ octets: [UInt8]) -> Bool {
+        guard octets.count == 4 else { return false }
+        switch (octets[0], octets[1]) {
+        case (127, _), (10, _), (172, 16...31), (192, 168):
+            return true
+        default:
+            return false
+        }
     }
 }
 
@@ -432,6 +503,11 @@ public final class DicomStorageSCPService {
                 }
                 let command = try DicomDIMSECommandSet.decode(message.data)
                 switch command.commandField {
+                case DicomDIMSECommandField.cEchoRQ:
+                    try handleEcho(command: command,
+                                   commandContextID: message.presentationContextID,
+                                   association: association,
+                                   transport: transport)
                 case DicomDIMSECommandField.cStoreRQ:
                     if let stored = try handleStore(command: command,
                                                     commandContextID: message.presentationContextID,
@@ -459,10 +535,29 @@ public final class DicomStorageSCPService {
 
     private var supportedAbstractSyntaxUIDs: Set<String> {
         var supported = configuration.supportedStorageSOPClassUIDs
+        supported.insert(DicomNetworkUID.verificationSOPClass)
         if configuration.enableStorageCommitment {
             supported.insert(DicomNetworkUID.storageCommitmentPushModelSOPClass)
         }
         return supported
+    }
+
+    private func handleEcho(command: DicomDIMSECommandSet,
+                            commandContextID: UInt8,
+                            association: DicomAssociation,
+                            transport: DicomAssociationTransport) throws {
+        _ = try acceptedContext(id: commandContextID, association: association)
+        let response = DicomDIMSECommandSet(
+            affectedSOPClassUID: DicomNetworkUID.verificationSOPClass,
+            commandField: DicomDIMSECommandField.cEchoRSP,
+            messageIDBeingRespondedTo: command.messageID,
+            commandDataSetType: DicomDIMSECommandDataSetType.noDataSet,
+            status: 0
+        )
+        try sendCommand(response,
+                        presentationContextID: commandContextID,
+                        association: association,
+                        transport: transport)
     }
 
     private func validateCalledAETitle(_ calledAETitle: String,
@@ -778,10 +873,13 @@ public final class DicomStoreAndForwardQueue {
 }
 
 #if canImport(Network)
-public final class DicomStorageSCPServer {
+public final class DicomStorageSCPServer: @unchecked Sendable {
     public let service: DicomStorageSCPService
     private let listener: NWListener
     private let queue = DispatchQueue(label: "DicomStorageSCPServer")
+    private let cancellationSemaphore = DispatchSemaphore(value: 0)
+    private let lifecycleLock = NSLock()
+    private var didStart = false
     private let tlsContext: DicomAppliedTLSContext?
 
     public init(service: DicomStorageSCPService) throws {
@@ -794,10 +892,22 @@ public final class DicomStorageSCPServer {
         self.listener = try NWListener(using: prepared.parameters, on: port)
     }
 
+    var listeningPort: UInt16? {
+        listener.port?.rawValue
+    }
+
     public func start(progress: (@Sendable (DicomStorageSCPProgress) -> Void)? = nil) throws {
         let semaphore = DispatchSemaphore(value: 0)
+        let cancellationSemaphore = cancellationSemaphore
         var startupError: Error?
         listener.newConnectionHandler = { [service] connection in
+            guard DicomStorageSCPPeerAccess.allows(
+                connection.endpoint,
+                acceptOnlyIntranet: service.configuration.acceptOnlyIntranet
+            ) else {
+                connection.cancel()
+                return
+            }
             let transport = DicomTCPAssociationTransport(acceptedConnection: connection,
                                                          timeout: service.configuration.timeout,
                                                          maximumIncomingPDUSize: service.configuration.maximumPDULength)
@@ -814,9 +924,14 @@ public final class DicomStorageSCPServer {
             case .failed(let error):
                 startupError = error
                 semaphore.signal()
+            case .cancelled:
+                cancellationSemaphore.signal()
             default:
                 break
             }
+        }
+        lifecycleLock.withLock {
+            didStart = true
         }
         listener.start(queue: queue)
         guard semaphore.wait(timeout: .now() + service.configuration.timeout) == .success else {
@@ -827,8 +942,21 @@ public final class DicomStorageSCPServer {
         }
     }
 
-    public func stop() {
+    public func stop() async {
+        let shouldWaitForCancellation = lifecycleLock.withLock { didStart }
         listener.cancel()
+        guard shouldWaitForCancellation else { return }
+        guard case .cancelled = listener.state else {
+            let cancellationSemaphore = cancellationSemaphore
+            let timeout = service.configuration.timeout
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                DispatchQueue.global(qos: .utility).async {
+                    _ = cancellationSemaphore.wait(timeout: .now() + timeout)
+                    continuation.resume()
+                }
+            }
+            return
+        }
     }
 }
 #endif

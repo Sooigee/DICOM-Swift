@@ -127,22 +127,21 @@ internal final class DCMPixelReader {
         sourcePtr: UnsafeRawPointer,
         outputBuffer: UnsafeMutableBufferPointer<UInt16>,
         count: Int,
-        littleEndian: Bool,
-        inverted: Bool = false
+        littleEndian: Bool
     ) {
         guard count > 0, let destination = outputBuffer.baseAddress else { return }
-        let transformMask: UInt16 = inverted ? 0x7FFF : 0x8000
+        let signMask = UInt16(0x8000)
         let sourceAddress = UInt(bitPattern: sourcePtr)
 
         if sourceAddress.isMultiple(of: UInt(MemoryLayout<UInt16>.alignment)) {
             let source = sourcePtr.assumingMemoryBound(to: UInt16.self)
             if littleEndian {
                 for index in 0..<count {
-                    destination[index] = source[index] ^ transformMask
+                    destination[index] = source[index] ^ signMask
                 }
             } else {
                 for index in 0..<count {
-                    destination[index] = source[index].byteSwapped ^ transformMask
+                    destination[index] = source[index].byteSwapped ^ signMask
                 }
             }
         } else {
@@ -155,7 +154,7 @@ internal final class DCMPixelReader {
                 } else {
                     raw = UInt16(source[byteOffset]) << 8 | UInt16(source[byteOffset + 1])
                 }
-                destination[index] = raw ^ transformMask
+                destination[index] = raw ^ signMask
             }
         }
     }
@@ -236,7 +235,8 @@ internal final class DCMPixelReader {
         }
     }
 
-    /// Inversion of normalized signed 16-bit pixels for MONOCHROME1.
+    /// Vectorized inversion of signed 16‑bit pixels for MONOCHROME1
+    /// photometric interpretation using Accelerate vDSP operations.
     /// This function performs the operation:
     /// output[i] = 65535 - input[i], matching the display inversion used
     /// for unsigned normalized pixels.
@@ -256,10 +256,28 @@ internal final class DCMPixelReader {
         guard count > 0 else { return }
         precondition(count <= buffer.count, "buffer overrun")
 
-        buffer.withUnsafeMutableBufferPointer { pixels in
-            guard let baseAddress = pixels.baseAddress else { return }
-            for index in 0..<count {
-                baseAddress[index] = UInt16.max - baseAddress[index]
+        // Convert UInt16 to Float for vDSP processing
+        var floatPixels = [Float](repeating: 0, count: count)
+        buffer.withUnsafeBufferPointer { uint16Buffer in
+            vDSP_vfltu16(uint16Buffer.baseAddress!, 1, &floatPixels, 1, vDSP_Length(count))
+        }
+
+        // Negate values: -input
+        vDSP_vneg(floatPixels, 1, &floatPixels, 1, vDSP_Length(count))
+
+        // Add 65535: 65535 + (-input) = 65535 - input
+        var offset: Float = 65535.0
+        vDSP_vsadd(floatPixels, 1, &offset, &floatPixels, 1, vDSP_Length(count))
+
+        // Clamp to valid range [0, 65535] to handle wrapping
+        var lowerBound: Float = 0.0
+        var upperBound: Float = 65535.0
+        vDSP_vclip(floatPixels, 1, &lowerBound, &upperBound, &floatPixels, 1, vDSP_Length(count))
+
+        // Convert back to UInt16
+        floatPixels.withUnsafeBufferPointer { floatBuffer in
+            buffer.withUnsafeMutableBufferPointer { uint16Buffer in
+                vDSP_vfixu16(floatBuffer.baseAddress!, 1, uint16Buffer.baseAddress!, 1, vDSP_Length(count))
             }
         }
     }
@@ -447,8 +465,7 @@ internal final class DCMPixelReader {
                             sourcePtr: basePtr,
                             outputBuffer: pixelBuffer,
                             count: numPixels,
-                            littleEndian: littleEndian,
-                            inverted: photometricInterpretation == "MONOCHROME1"
+                            littleEndian: littleEndian
                         )
                     }
 
@@ -457,7 +474,9 @@ internal final class DCMPixelReader {
             }
 
             if photometricInterpretation == "MONOCHROME1" {
-                if !result.signedImage {
+                if result.signedImage {
+                    invertMonochrome1SignedVectorized(buffer: &pixels, count: numPixels)
+                } else {
                     invertMonochrome1Vectorized(buffer: &pixels, count: numPixels)
                 }
             }

@@ -206,7 +206,7 @@ public struct DicomSUVMetadata: Equatable, Sendable {
     public func suvValue(forActivityConcentrationBqPerMl activityConcentration: Double,
                          type: DicomSUVType) -> Double? {
         guard activityConcentration.isFinite else { return nil }
-        if units == "GML", type == .bw {
+        if units == "GML", type == .bw, suvType == nil || suvType == DicomSUVType.bw.rawValue {
             return activityConcentration
         }
         guard units == "BQML",
@@ -223,6 +223,7 @@ public struct DicomSUVMetadata: Equatable, Sendable {
         DicomSUVMetadata.makeDiagnostics(
             for: type,
             units: units,
+            suvType: suvType,
             decayFactor: decayFactor,
             patientWeightKg: patientWeightKg,
             patientSizeMeters: patientSizeMeters,
@@ -318,6 +319,7 @@ public struct DicomSUVMetadata: Equatable, Sendable {
 
     private static func makeDiagnostics(for type: DicomSUVType,
                                         units: String?,
+                                        suvType: String?,
                                         decayFactor: Double?,
                                         patientWeightKg: Double?,
                                         patientSizeMeters: Double?,
@@ -330,6 +332,12 @@ public struct DicomSUVMetadata: Equatable, Sendable {
         var diagnostics: [DicomQuantitativeDiagnostic] = []
         if units == nil {
             diagnostics.append(.missing(.units, "Units"))
+        } else if units == "GML", type == .bw, let suvType, suvType != DicomSUVType.bw.rawValue {
+            diagnostics.append(DicomQuantitativeDiagnostic(
+                code: "incompatible_suv_type",
+                message: "PET Units GML contain \(suvType), not SUVbw.",
+                tag: DicomTag.suvType.rawValue
+            ))
         } else if units != "BQML" && !(units == "GML" && type == .bw) {
             diagnostics.append(DicomQuantitativeDiagnostic(
                 code: "unsupported_pet_units",

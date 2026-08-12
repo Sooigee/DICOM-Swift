@@ -388,34 +388,6 @@ final class DCMPixelReaderInternalTests: XCTestCase {
         XCTAssertEqual(result?.pixels16?[0], UInt16(31744), "Signed -1024 should normalize to 31744")
     }
 
-    func testReadPixelsFusesSignedNormalizationAndMonochrome1Inversion() {
-        let offset = 2
-        let samples: [Int16] = [.min, -1, 0, .max]
-        var data = Data(count: offset + samples.count * 2)
-        for (index, sample) in samples.enumerated() {
-            writeLittleEndianUInt16(
-                UInt16(bitPattern: sample),
-                to: &data,
-                at: offset + index * 2
-            )
-        }
-
-        let result = DCMPixelReader.readPixels(
-            data: data,
-            width: samples.count,
-            height: 1,
-            bitDepth: 16,
-            samplesPerPixel: 1,
-            offset: offset,
-            pixelRepresentation: 1,
-            littleEndian: true,
-            photometricInterpretation: "MONOCHROME1"
-        )
-
-        XCTAssertTrue(result.signedImage)
-        XCTAssertEqual(result.pixels16, [UInt16.max, 32768, 32767, 0])
-    }
-
     // MARK: - readPixels8 Range Tests
 
     func testReadPixels8WithValidRange() {

@@ -163,7 +163,7 @@ extension DCMDecoder {
             reader = activeReader
 
             // Check for end of data or invalid tag
-            if tag == 0 || location >= dicomData.count {
+            if tag < 0 || location >= dicomData.count {
                 if offset == 0 {
                     offset = location
                 }

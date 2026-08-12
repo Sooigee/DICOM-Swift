@@ -74,6 +74,7 @@ public struct DicomRTStructureSet: Equatable, Sendable {
     public let label: String?
     public let name: String?
     public let description: String?
+    public let referencedSeriesInstanceUIDs: [String]
     public let rois: [DicomRTROI]
     public let roiContours: [DicomRTROIContour]
 
@@ -82,6 +83,7 @@ public struct DicomRTStructureSet: Equatable, Sendable {
         label: String? = nil,
         name: String? = nil,
         description: String? = nil,
+        referencedSeriesInstanceUIDs: [String] = [],
         rois: [DicomRTROI],
         roiContours: [DicomRTROIContour]
     ) {
@@ -89,6 +91,7 @@ public struct DicomRTStructureSet: Equatable, Sendable {
         self.label = label?.dicomRTNonEmptyValue
         self.name = name?.dicomRTNonEmptyValue
         self.description = description?.dicomRTNonEmptyValue
+        self.referencedSeriesInstanceUIDs = referencedSeriesInstanceUIDs
         self.rois = rois
         self.roiContours = roiContours
     }
@@ -297,6 +300,7 @@ private enum DicomRTObjectParser {
             label: decoder.info(for: .structureSetLabel),
             name: decoder.info(for: .structureSetName),
             description: decoder.info(for: .structureSetDescription),
+            referencedSeriesInstanceUIDs: referencedSeriesInstanceUIDs(from: decoder.dataSet),
             rois: rois,
             roiContours: roiContours
         )
@@ -365,6 +369,17 @@ private enum DicomRTObjectParser {
     private static func matches(_ decoder: DCMDecoder, sopClassUID: String, modality: String) -> Bool {
         decoder.info(for: .sopClassUID).dicomRTTrimmedValue == sopClassUID ||
             decoder.info(for: .modality).dicomRTTrimmedValue == modality
+    }
+
+    private static func referencedSeriesInstanceUIDs(from dataSet: DicomDataSet) -> [String] {
+        var seen: Set<String> = []
+        return dataSet.sequenceItems(for: .referencedFrameOfReferenceSequence).flatMap { frameReference in
+            frameReference.dataSet.sequenceItems(for: .rtReferencedStudySequence).flatMap { studyReference in
+                studyReference.dataSet.sequenceItems(for: .rtReferencedSeriesSequence).compactMap { seriesReference in
+                    seriesReference.dataSet.string(for: .seriesInstanceUID)?.dicomRTNonEmptyValue
+                }
+            }
+        }.filter { seen.insert($0).inserted }
     }
 
     private static func roi(from dataSet: DicomDataSet, observation: ROIObservation?) -> DicomRTROI? {

@@ -110,6 +110,7 @@ public struct DicomDecodedSeries: Sendable {
     public let rescaleIntercept: Double
     public let windowCenter: Double?
     public let windowWidth: Double?
+    public let sliceVOIs: [DicomFrameVOI?]
     public let quantitativeValueProfile: DicomQuantitativeValueProfile
     public let sourceURL: URL
     public let imageInstances: [DicomSeriesImageInstance]
@@ -137,6 +138,7 @@ public struct DicomDecodedSeries: Sendable {
                 rescaleIntercept: Double,
                 windowCenter: Double?,
                 windowWidth: Double?,
+                sliceVOIs: [DicomFrameVOI?] = [],
                 quantitativeValueProfile: DicomQuantitativeValueProfile = .empty,
                 sourceURL: URL,
                 imageInstances: [DicomSeriesImageInstance] = [],
@@ -163,6 +165,7 @@ public struct DicomDecodedSeries: Sendable {
         self.rescaleIntercept = rescaleIntercept
         self.windowCenter = windowCenter
         self.windowWidth = windowWidth
+        self.sliceVOIs = sliceVOIs
         self.quantitativeValueProfile = quantitativeValueProfile
         self.sourceURL = sourceURL
         self.imageInstances = imageInstances
@@ -354,6 +357,7 @@ extension DicomDecodedSeries {
             rescaleIntercept: volume.rescaleIntercept,
             windowCenter: volume.windowCenter,
             windowWidth: volume.windowWidth,
+            sliceVOIs: volume.sliceVOIs,
             quantitativeValueProfile: volume.quantitativeValueProfile,
             sourceURL: sourceURL,
             imageInstances: volume.imageInstances,

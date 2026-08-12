@@ -33,9 +33,9 @@ A DICOM file (`.dcm`) contains:
 
 Before you start, ensure you have:
 
-- Xcode 15.0+
-- Swift 5.9+
-- macOS 12+ or iOS 13+
+- Xcode 26.0+
+- Swift 6.2+ toolchain
+- macOS 26+ or iOS 26+
 - Basic Swift knowledge
 - At least one DICOM file to test (`.dcm`)
 
@@ -129,7 +129,7 @@ Patient Name: John Doe
 
 ### Example 2: Async Reading
 
-For iOS 13+ and macOS 10.15+, you can use the asynchronous API:
+Use the asynchronous API to keep file loading off the caller's thread:
 
 ```swift
 import DicomCore

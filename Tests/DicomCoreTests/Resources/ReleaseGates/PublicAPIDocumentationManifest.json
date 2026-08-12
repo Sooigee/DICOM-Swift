@@ -7,14 +7,15 @@
   "ownerDocumentation": [
     {
       "owner": "DicomCore",
-        "apiDocumentation": [
-          "README.md",
-          "DICOM_GLOSSARY.md"
-        ],
-        "usageDocumentation": [
-          "README.md",
-          "BENCHMARKS.md"
-        ],
+      "apiDocumentation": [
+        "README.md",
+        "DICOM_GLOSSARY.md"
+      ],
+      "usageDocumentation": [
+        "README.md",
+        "BENCHMARKS.md",
+        "README.md"
+      ],
       "limitations": [
         {
           "category": "codecs",
@@ -29,7 +30,7 @@
           "path": "README.md"
         },
         {
-          "category": "export",
+          "category": "rendering",
           "path": "README.md"
         },
         {
@@ -43,7 +44,7 @@
       ]
     }
   ],
-  "coreWorkflows": [
+  "demoWorkflows": [
     {
       "id": "decode-local-dicom",
       "path": "Tests/DicomCoreTests/Resources/ReleaseGates/PublicAPIDocumentationPolicy.md",

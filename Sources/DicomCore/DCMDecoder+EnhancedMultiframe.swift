@@ -5,10 +5,14 @@ extension DCMDecoder {
         synchronized {
             let sharedItems = parseFunctionalGroupItemsUnsafe(for: .sharedFunctionalGroupsSequence)
             let perFrameItems = parseFunctionalGroupItemsUnsafe(for: .perFrameFunctionalGroupsSequence)
+            let dimensionOrganizationItems = parseFunctionalGroupItemsUnsafe(for: .dimensionOrganizationSequence)
+            let dimensionIndexItems = parseFunctionalGroupItemsUnsafe(for: .dimensionIndexSequence)
             return DicomEnhancedMultiframeParser.makeFunctionalGroups(
                 sharedItems: sharedItems,
                 perFrameItems: perFrameItems,
-                declaredFrameCount: max(1, nImages)
+                declaredFrameCount: max(1, nImages),
+                dimensionOrganizationItems: dimensionOrganizationItems,
+                dimensionIndexItems: dimensionIndexItems
             )
         }
     }

@@ -149,6 +149,80 @@ final class DicomSequenceValueParserTests: XCTestCase {
         XCTAssertEqual(dataSet.string(for: codeMeaningTag), "After sequence")
     }
 
+    // Regression: C-FIND response identifiers negotiated as Implicit VR Little
+    // Endian used to decode every study-level tag as UN, so patient name, dates,
+    // and StudyInstanceUID were silently dropped.
+    func testImplicitVRStudyLevelFindIdentifierDecodesStringValues() throws {
+        let studyInstanceUID = "1.2.840.99999.100.20"
+        let fragments: [Data] = [
+            implicitElement(DicomTag.specificCharacterSet.rawValue, value: "ISO_IR 192"),
+            implicitElement(DicomTag.studyDate.rawValue, value: "20260115"),
+            implicitElement(DicomTag.studyTime.rawValue, value: "093000"),
+            implicitElement(0x00080050, value: "ACC001"),
+            implicitElement(0x00080052, value: "STUDY"),
+            implicitElement(DicomTag.modalitiesInStudy.rawValue, value: "CT\\SR"),
+            implicitElement(DicomTag.institutionName.rawValue, value: "GENERAL HOSPITAL"),
+            implicitElement(DicomTag.studyDescription.rawValue, value: "CHEST CT"),
+            implicitElement(DicomTag.patientName.rawValue, value: "DOE^JOHN"),
+            implicitElement(DicomTag.patientID.rawValue, value: "PID-001"),
+            implicitElement(0x00100030, value: "19800115"),
+            implicitElement(DicomTag.patientSex.rawValue, value: "M"),
+            implicitElement(DicomTag.studyInstanceUID.rawValue, value: studyInstanceUID),
+            implicitElement(DicomTag.studyID.rawValue, value: "ST-1"),
+            implicitElement(DicomTag.numberOfStudyRelatedSeries.rawValue, value: "6"),
+            implicitElement(0x00201208, value: "120")
+        ]
+        let data = fragments.reduce(Data(), +)
+
+        let dataSet = try DicomDataSetParser.dataSet(from: data, transferSyntax: .implicitVRLittleEndian)
+
+        XCTAssertEqual(dataSet.string(for: .specificCharacterSet), "ISO_IR 192")
+        XCTAssertEqual(dataSet.string(for: .studyDate), "20260115")
+        XCTAssertEqual(dataSet.string(for: .studyTime), "093000")
+        XCTAssertEqual(dataSet.string(for: 0x00080050), "ACC001")
+        XCTAssertEqual(dataSet.string(for: 0x00080052), "STUDY")
+        XCTAssertEqual(dataSet.strings(for: .modalitiesInStudy), ["CT", "SR"])
+        XCTAssertEqual(dataSet.string(for: .institutionName), "GENERAL HOSPITAL")
+        XCTAssertEqual(dataSet.string(for: .studyDescription), "CHEST CT")
+        XCTAssertEqual(dataSet.string(for: .patientName), "DOE^JOHN")
+        XCTAssertEqual(dataSet.string(for: .patientID), "PID-001")
+        XCTAssertEqual(dataSet.string(for: 0x00100030), "19800115")
+        XCTAssertEqual(dataSet.string(for: .patientSex), "M")
+        XCTAssertEqual(dataSet.string(for: .studyInstanceUID), studyInstanceUID)
+        XCTAssertEqual(dataSet.string(for: .studyID), "ST-1")
+        XCTAssertEqual(dataSet.int(for: .numberOfStudyRelatedSeries), 6)
+        XCTAssertEqual(dataSet.int(for: 0x00201208), 120)
+    }
+
+    func testImplicitVRSeriesLevelFindIdentifierDecodesStringAndBinaryValues() throws {
+        let seriesInstanceUID = "1.2.840.99999.300.40"
+        let fragments: [Data] = [
+            implicitElement(DicomTag.seriesDate.rawValue, value: "20260116"),
+            implicitElement(DicomTag.seriesTime.rawValue, value: "101500"),
+            implicitElement(0x00080052, value: "SERIES"),
+            implicitElement(DicomTag.modality.rawValue, value: "CT"),
+            implicitElement(DicomTag.seriesDescription.rawValue, value: "AXIAL 1MM"),
+            implicitElement(DicomTag.seriesInstanceUID.rawValue, value: seriesInstanceUID),
+            implicitElement(DicomTag.seriesNumber.rawValue, value: "3"),
+            implicitElement(DicomTag.numberOfSeriesRelatedInstances.rawValue, value: "240"),
+            implicitElementHeader(DicomTag.rows.rawValue, length: 2) + uint16Data(512),
+            implicitElementHeader(DicomTag.columns.rawValue, length: 2) + uint16Data(256)
+        ]
+        let data = fragments.reduce(Data(), +)
+
+        let dataSet = try DicomDataSetParser.dataSet(from: data, transferSyntax: .implicitVRLittleEndian)
+
+        XCTAssertEqual(dataSet.string(for: .seriesDate), "20260116")
+        XCTAssertEqual(dataSet.string(for: .seriesTime), "101500")
+        XCTAssertEqual(dataSet.string(for: .modality), "CT")
+        XCTAssertEqual(dataSet.string(for: .seriesDescription), "AXIAL 1MM")
+        XCTAssertEqual(dataSet.string(for: .seriesInstanceUID), seriesInstanceUID)
+        XCTAssertEqual(dataSet.int(for: .seriesNumber), 3)
+        XCTAssertEqual(dataSet.int(for: .numberOfSeriesRelatedInstances), 240)
+        XCTAssertEqual(dataSet.int(for: .rows), 512)
+        XCTAssertEqual(dataSet.int(for: .columns), 256)
+    }
+
     func testNestedUndefinedLengthSequenceParsesInnerItems() throws {
         let nested = sequence(
             modifierSequenceTag,

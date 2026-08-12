@@ -5,30 +5,85 @@ public enum DicomTLSMode: String, Codable, Equatable, Hashable, Sendable {
     case enabled
 }
 
-public enum DicomTLSSecurityProfile: String, Codable, Equatable, Hashable, Sendable {
+public enum DicomTLSSecurityProfile: String, Equatable, Hashable, Sendable {
     case none
-    case nonDowngradingBCP195
-    case bcp195
-    case extendedBCP195
-    case basicRetired
-    case aesRetired
-    case authenticatedUnencryptedRetired
+    case bcp195RFC8996
+}
+
+extension DicomTLSSecurityProfile: Codable {
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case Self.none.rawValue:
+            self = .none
+        case Self.bcp195RFC8996.rawValue,
+             "nonDowngradingBCP195",
+             "bcp195",
+             "extendedBCP195",
+             "basicRetired",
+             "aesRetired",
+             "authenticatedUnencryptedRetired":
+            self = .bcp195RFC8996
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown DICOM TLS security profile: \(rawValue)"
+            )
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public struct DicomTLSMaterial: Codable, Equatable, Sendable {
     public var certificatePath: String?
     public var privateKeyPath: String?
+    /// Process-only key material. Codable conformance intentionally excludes this value.
+    public var privateKeyData: Data?
     public var trustStorePath: String?
     public var trustedCertificatePaths: [String]
 
+    private enum CodingKeys: String, CodingKey {
+        case certificatePath
+        case privateKeyPath
+        case trustStorePath
+        case trustedCertificatePaths
+    }
+
     public init(certificatePath: String? = nil,
                 privateKeyPath: String? = nil,
+                privateKeyData: Data? = nil,
                 trustStorePath: String? = nil,
                 trustedCertificatePaths: [String] = []) {
         self.certificatePath = certificatePath
         self.privateKeyPath = privateKeyPath
+        self.privateKeyData = privateKeyData
         self.trustStorePath = trustStorePath
         self.trustedCertificatePaths = trustedCertificatePaths
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        certificatePath = try container.decodeIfPresent(String.self, forKey: .certificatePath)
+        privateKeyPath = try container.decodeIfPresent(String.self, forKey: .privateKeyPath)
+        privateKeyData = nil
+        trustStorePath = try container.decodeIfPresent(String.self, forKey: .trustStorePath)
+        trustedCertificatePaths = try container.decodeIfPresent(
+            [String].self,
+            forKey: .trustedCertificatePaths
+        ) ?? []
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(certificatePath, forKey: .certificatePath)
+        try container.encodeIfPresent(privateKeyPath, forKey: .privateKeyPath)
+        try container.encodeIfPresent(trustStorePath, forKey: .trustStorePath)
+        try container.encode(trustedCertificatePaths, forKey: .trustedCertificatePaths)
     }
 }
 
@@ -117,12 +172,16 @@ public struct DicomDIMSEAssociationPoolKey: Codable, Equatable, Hashable, Sendab
     public struct TLSMaterialKey: Codable, Equatable, Hashable, Sendable {
         public var certificatePath: String?
         public var privateKeyPath: String?
+        public var privateKeyDataLength: Int?
+        public var privateKeyDataFingerprint: String?
         public var trustStorePath: String?
         public var trustedCertificatePaths: [String]
 
         public init(material: DicomTLSMaterial?) {
             certificatePath = material?.certificatePath
             privateKeyPath = material?.privateKeyPath
+            privateKeyDataLength = material?.privateKeyData?.count
+            privateKeyDataFingerprint = material?.privateKeyData.map(DicomDIMSEAssociationPoolKey.fingerprint)
             trustStorePath = material?.trustStorePath
             trustedCertificatePaths = material?.trustedCertificatePaths ?? []
         }
@@ -217,6 +276,8 @@ public struct DicomDIMSEAssociationPoolKey: Codable, Equatable, Hashable, Sendab
             tlsServerName ?? "",
             tlsMaterial.certificatePath ?? "",
             tlsMaterial.privateKeyPath ?? "",
+            tlsMaterial.privateKeyDataLength.map(String.init) ?? "",
+            tlsMaterial.privateKeyDataFingerprint ?? "",
             tlsMaterial.trustStorePath ?? "",
             tlsMaterial.trustedCertificatePaths.joined(separator: ","),
             tlsSecurityProfile.rawValue,

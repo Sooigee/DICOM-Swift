@@ -6,8 +6,10 @@
 //
 
 import Foundation
+#if canImport(J2KCodec) && canImport(J2KCore)
 import J2KCodec
 import J2KCore
+#endif
 
 extension DicomCodecBackendIdentifier {
     static let j2kSwiftCPU: Self = "j2kswift-cpu"
@@ -28,6 +30,7 @@ struct DicomJ2KSwiftBackend: DicomFrameCodecBackend {
         DicomTransferSyntax.jpeg2000.rawValue
     ]
 
+    #if canImport(J2KCodec) && canImport(J2KCore)
     let capabilities = DicomFrameCodecCapabilities(
         identifier: .j2kSwiftCPU,
         families: [.jpeg2000, .htj2k],
@@ -503,4 +506,36 @@ struct DicomJ2KSwiftBackend: DicomFrameCodecBackend {
         }
         return output
     }
+    #else
+    let capabilities = DicomFrameCodecCapabilities(
+        identifier: .j2kSwiftCPU,
+        families: [.jpeg2000, .htj2k],
+        transferSyntaxUIDs: qualifiedTransferSyntaxes,
+        encodeTransferSyntaxUIDs: allFrameTransferSyntaxes,
+        operations: [.decode, .encode],
+        supportedGrayscaleBitDepths: 1...16,
+        supportedColorBitDepths: 1...8,
+        maximumComponents: 3,
+        supportsSignedSamples: true,
+        executionClass: .cpu,
+        source: .packageLinked,
+        version: nil,
+        isAvailable: false,
+        unsupportedReason: "J2KSwift is unavailable on this platform; use the OpenJPEG backend."
+    )
+
+    func decode(_ request: DicomFrameDecodeRequest) async throws -> DicomCodecDecodedFrame {
+        throw DicomJ2KSwiftBackendError.unsupportedShape(
+            transferSyntaxUID: request.descriptor.transferSyntaxUID,
+            reason: capabilities.unsupportedReason ?? "J2KSwift is unavailable."
+        )
+    }
+
+    func encode(_ request: DicomFrameEncodeRequest) async throws -> Data {
+        throw DicomJ2KSwiftBackendError.unsupportedShape(
+            transferSyntaxUID: request.targetTransferSyntaxUID,
+            reason: capabilities.unsupportedReason ?? "J2KSwift is unavailable."
+        )
+    }
+    #endif
 }

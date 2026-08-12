@@ -4,7 +4,7 @@ Comprehensive DICOM conformance documentation detailing supported transfer synta
 
 ## Overview
 
-This DICOM Conformance Statement describes the capabilities and limitations of the DicomCore library (version 1.2.0) in accordance with DICOM Part 2: Conformance. DicomCore is a Swift DICOM file library for iOS 18+ and macOS 15+ that parses DICOM medical imaging files, extracts metadata, provides pixel data access with optional GPU-accelerated image processing, writes controlled Part 10 datasets, and exposes transport-injected DICOMweb service helpers covered by package tests.
+This DICOM Conformance Statement describes the capabilities and limitations of the DicomCore library (version 1.2.0) in accordance with DICOM Part 2: Conformance. DicomCore is a Swift DICOM file library for iOS, visionOS, and macOS 26+ that parses DICOM medical imaging files, extracts metadata, provides pixel data access with optional GPU-accelerated image processing, writes controlled Part 10 datasets, and exposes transport-injected DICOMweb service helpers covered by package tests.
 
 **Implementation Type:** DICOM File Decoder/Writer Library with transport-injected DICOMweb helpers and JPIP progressive pixel streaming
 
@@ -47,12 +47,14 @@ DicomCore provides the following functional capabilities:
 | **Image Processing** | Apply window/level transformations with CPU or GPU | ✅ Supported |
 | **Series Loading** | Load/order package-only single-frame uncompressed 8/16/32-bit MONOCHROME1/2 grayscale series into `Int16` volumes; reject compressed/color/multiframe inputs with pixel context | Scoped grayscale matrix |
 | **DICOMDIR Media Import** | Read/write DICOMDIR records and resolve local file references | ✅ Supported |
-| **Enhanced Multi-frame Functional Groups** | Parse shared/per-frame geometry, timing, pixel measures, and source references | ✅ Supported for uncompressed native pixel data |
+| **Enhanced Multi-frame Functional Groups** | Parse shared/per-frame geometry, timing, pixel measures, Frame VOI, and source references | ✅ Synthetic Enhanced CT/MR, native or decodable compressed pixel data |
+| **Enhanced CT/MR Classic Conversion** | Convert the qualified single-stack profile into one validated classic CT/MR Part 10 instance per frame | ✅ Native and RLE Lossless MONOCHROME1/2, aligned 8/16-bit |
 | **Quantitative Values** | Parse Real World Value Mapping linear/LUT items and calculate PET SUV variants when required metadata is present | ✅ Supported for uncompressed native pixel data |
 | **Encapsulated Pixel Data Indexing** | Parse Basic Offset Table, Extended Offset Table, fragments, and frame-to-fragment mappings | Supported before codec decode |
 | **DICOM Segmentation** | Parse binary/fractional SEG frames, preserve segment/source/geometry metadata, and build synthetic SEG datasets | ✅ Synthetic binary and fractional |
 | **Radiotherapy Objects** | Parse RTSTRUCT contours, RTDOSE scaled volumes, and RTPLAN beam/control point metadata | ✅ Synthetic RT objects |
 | **Parametric Map** | Parse integer, Float Pixel Data, and Double Float Pixel Data scalar maps with units, quantity definitions, RWV, geometry, and source references | ✅ Synthetic PM |
+| **Overlay Plane** | Parse all repeating groups 6000-601E as frame-specific one-bit masks, including retired embedded native overlays | ✅ Standalone and native single-sample embedded overlays |
 | **Structured Reports and Key Objects** | Parse SR/KOS content trees, measurements, ROI/source references, CAD findings, and key image references; build controlled SR/KOS datasets; validate Enhanced/Comprehensive SR TID 1500 and KOS references through an explicit support matrix | ✅ Synthetic SR/KOS with scoped semantics |
 | **Secondary Capture Objects** | Build RGB/monochrome snapshot datasets, parse SC metadata/source references, and write Part 10 SC files | ✅ Synthetic SC |
 | **Inference Output Objects** | Build external inference outputs as SR findings, SEG masks, GSPS graphics, and derived images with source references and tracking identifiers | ✅ Synthetic SR/SEG/GSPS |
@@ -100,15 +102,15 @@ remote archive qualification.
 
 | Feature | Supported Surface | Responsibility | Notes |
 | --- | --- | --- | --- |
-| C-ECHO | Verification SCU | `DicomDIMSEServiceSCU.verify` | Association negotiation, progress, retry, timeout, and success status are covered by package tests. |
+| C-ECHO | Verification SCU and SCP | `DicomDIMSEServiceSCU.verify` and `DicomStorageSCPService` | Association negotiation, listener response, progress, retry, timeout, and success status are covered by package tests. |
 | C-FIND | Study Root and Modality Worklist SCU | `DicomDIMSEServiceSCU.find` and `findModalityWorklist` | Pending identifiers, final status, and scheduled procedure step mapping are tested. |
 | C-GET | Study Root retrieve SCU with C-STORE suboperation handling | `DicomDIMSEServiceSCU.get` | Per-instance delivery after the C-STORE response and collector compatibility are tested. |
 | C-MOVE | Study Root retrieve SCU | `DicomDIMSEServiceSCU.move` | Pending/completed suboperation progress and move destination AE title propagation are tested. |
 | C-STORE | Storage SCU and Storage SCP | `DicomDIMSEServiceSCU.store`, `DicomStorageSCPService`, `DicomStorageSCPServer` | Part 10 payload parsing, transfer-syntax mismatch rejection, file cache writes, and association handling are tested. |
 | Storage Commitment | Push-model tracking/report helpers | `DicomStorageCommitmentTracker` and `DicomStorageSCPService` | Commitment event report datasets and partial success reports are tested; production archive policy is caller-owned. |
 | MPPS | N-CREATE and N-SET SCU helpers | `DicomDIMSEServiceSCU.createMPPS` and `updateMPPS` | Modality worklist-derived create/update datasets are covered by package tests. |
-| Basic Grayscale Print | Basic Grayscale Print Management Meta SOP Class | `DicomPrintJob` and `DicomDIMSEServiceSCU.sendPrintJob` | Color print, Presentation LUT service, annotation boxes, printer configuration/status services, and storage commitment remain unsupported. |
-| TLS | Client and Storage SCP listener configuration | `DicomTLSConfiguration` and `DicomTLSOptionsFactory` | Certificate, private-key, trust-store, server-name, BCP 195 profile, and handshake behavior are tested where Network/Security are available. |
+| Basic Grayscale Print | Basic Grayscale Print Management Meta SOP Class | `DicomPrintJob` and `DicomDIMSEServiceSCU.sendPrintJob` | Color print, Presentation LUT service, annotation boxes, printer configuration/status services, and storage commitment remain unsupported. A printer that grants fewer image boxes than the job requested fails the job with `DicomPrintManagementError.insufficientImageBoxes(requested:granted:)` before any N-SET; the SCU never invents image box SOP Instance UIDs. |
+| TLS | Client and Storage SCP listener configuration | `DicomTLSConfiguration` and `DicomTLSOptionsFactory` | Certificate, private-key, trust-store, server-name, and the DICOM PS3.15 B.12 BCP 195 RFC 8996/9325 profile are tested where Network/Security are available. TLS 1.2 is the minimum; newer protocol and cipher negotiation remains system-managed. Retired serialized profile identifiers decode as B.12. |
 | User identity | Association user identity negotiation | `DicomUserIdentity` | User identity is rejected before association setup when TLS is disabled. |
 | Pooling/retry/cancellation | Association pooling, retry policy, circuit breaker, operation handle, progress, and audit log | `DicomDIMSEAssociationPool`, `DicomNetworkRetryPolicy`, `DicomNetworkCircuitBreaker`, `DicomDIMSEOperationHandle` | Cancellation avoids retries and circuit-breaker trips; pooling keys include node, AE titles, TLS, identity, transfer syntaxes, timeout, and bandwidth settings. |
 | External archive interop | Optional smoke tests and scripts | `DicomInteropSmokeTests` and interop tooling | Orthanc/dcm4che/DICOM-Swift smoke tests require caller-provided endpoints and are not bundled production services. |
@@ -125,9 +127,10 @@ and ``DicomVideoCodec``.
 
 | Feature | Supported IODs | Required Tags | Transfer Syntaxes | Payload Rules | Metadata Preservation | Unsupported Cases | Typed Failure |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| Overlay Plane | Pixel-bearing image instances using repeating groups 6000-601E | Overlay Rows, Columns, Type, Origin, Bits Allocated, and Bit Position; Overlay Data for standalone planes | Standalone OB/OW Overlay Data in native or encapsulated image instances; embedded planes require native 8/16/32-bit single-sample Pixel Data | Up to 16 planes; LSB-first continuous multi-frame bits; one-based and non-positive origins; Image Frame Origin alignment; single overlays apply to every image frame | Group, type, source, origin, dimensions, and bit position are preserved in the normalized result | Embedded overlays in compressed or multi-sample Pixel Data, malformed/truncated data, and overlay color without a Presentation State | Malformed or non-applicable planes are omitted from `overlayPlanes(forFrame:)` |
 | Image export | Native pixel-bearing image instances through `DCMDecoder` and `DicomImageExporter` | Pixel Data, Rows, Columns, Samples per Pixel, Photometric Interpretation, Bits Allocated, Bits Stored, High Bit, Pixel Representation | Native uncompressed Part 10 datasets addressable by `DicomPixelDataDescriptor` | `display8` exports PNG/JPEG/TIFF with resize and annotation burn-in; `native16Bit` exports unsigned single-sample TIFF only | Optional non-PHI sidecars preserve frame number, modality, dimensions, windowing, spacing, and transfer syntax context | Native 16-bit RGB, signed `native16Bit` TIFF, resize/annotations in `native16Bit` mode, compressed/video/referenced pixel export | `DicomImageExportError.unsupportedPixelMode` or `invalidPixelData` |
 | Secondary Capture | Secondary Capture Image Storage synthetic snapshots | Clinical export validation requires SOP Instance UID, Study Instance UID, Series Instance UID, Patient Name, Patient ID, Study ID, Study Date, Series Number, Instance Number, and the Image Pixel module | Explicit VR Little Endian Part 10 with native uncompressed Pixel Data | 8/16-bit unsigned MONOCHROME2 or 8-bit interleaved RGB with planar configuration 0 | Patient, study, series, instance, device, derivation, and source image references are preserved when supplied | Signed stored pixels, planar RGB, non-RGB three-sample payloads, unsupported bit depths, missing clinical context in strict export validation | `DicomSecondaryCaptureError.missingRequiredMetadata` or `unsupportedPixelLayout` |
-| Print management | Basic Grayscale Print Management Meta SOP Class with Basic Film Session, Basic Film Box, and Basic Grayscale Image Box | Film session copy/priority/medium/destination, film box layout/orientation/size, image box position, and grayscale 8-bit image pixel attributes | Negotiated DIMSE presentation context, defaulting to Explicit VR Little Endian when absent | Rendered RGB bitmaps and PNG snapshots are converted to 8-bit MONOCHROME2 Basic Grayscale Image Box payloads | Film session label, film box display settings, queue status, and returned image box SOP Instance UIDs are preserved | Color print, Presentation LUT service, annotation boxes, printer configuration/status services, and storage commitment | `DicomPrintManagementError.unsupportedService` |
+| Print management | Basic Grayscale Print Management Meta SOP Class with Basic Film Session, Basic Film Box, and Basic Grayscale Image Box | Film session copy/priority/medium/destination, film box layout/orientation/size, image box position, and grayscale 8-bit image pixel attributes | Negotiated DIMSE presentation context, defaulting to Explicit VR Little Endian when absent | Rendered RGB bitmaps and PNG snapshots are converted to 8-bit MONOCHROME2 Basic Grayscale Image Box payloads | Film session label, film box display settings, queue status, and returned image box SOP Instance UIDs are preserved | Color print, Presentation LUT service, annotation boxes, printer configuration/status services, storage commitment, and film boxes for which the printer grants fewer image boxes than the job requested | `DicomPrintManagementError.unsupportedService` or `insufficientImageBoxes(requested:granted:)` |
 | Waveform | 12-lead ECG, General ECG, Ambulatory ECG, General 32-bit ECG, Hemodynamic, Cardiac Electrophysiology, Arterial Pulse, and Respiratory Waveform Storage | Waveform Sequence, Number of Channels, Number of Samples, Sampling Frequency, Channel Definition Sequence, Waveform Bits Allocated, Waveform Sample Interpretation, and Waveform Data | Native dataset and Part 10 writing through `DicomDataSetWriter`; compressed waveform encodings are not implemented | SB, UB, SS, US, SL, and UL integer samples are interleaved by sample then channel with range checks | Channel labels, source concepts, units, sensitivity, filters, timing offsets, and source waveform references are preserved | Float/double samples, audio waveforms, vendor-specific packed encodings, inconsistent channel sample counts, and malformed payload lengths | `DicomWaveformError.unsupportedSampleInterpretation`, `sampleOutOfRange`, or `invalidWaveformData` |
 | Video | Video Endoscopic, Video Microscopic, and Video Photographic Image Storage | SOP Class UID, Rows, Columns, Number of Frames, timing metadata when available, transfer syntax UID, and encapsulated Pixel Data | MPEG-2, MPEG-4 AVC/H.264, and HEVC/H.265 DICOM video transfer syntaxes | Encoded streams and indexed encoded frame fragments are preserved for caller/player handoff; native frame decode and video encoding are not implemented | Codec, timing, frame rate, duration, source references, lossy compression method, and raw stream bytes are preserved | Non-video transfer syntaxes, native video frame decoding, video transcoding, and server-side DICOMweb rendered frames | `DicomVideoError.unsupportedTransferSyntax`, `nativeFrameDecodeUnsupported`, `transcodingUnsupported`, or `DICOMWEB_RENDERED_FRAME_UNSUPPORTED` |
 
@@ -149,12 +152,35 @@ fail with typed errors carrying transfer syntax and pixel metadata.
 Enhanced CT/MR multiframe objects assemble through
 `DicomSeriesLoader.loadEnhancedMultiframeVolume(at:)`: Shared and Per-Frame
 Functional Groups provide geometry (Plane Position/Orientation, Pixel
-Measures) and per-frame rescale (Pixel Value Transformation), frames order by
-position along the normal, and each frame decodes one at a time through
+Measures), per-frame rescale (Pixel Value Transformation), and Frame VOI;
+frames order by position along the normal, and each frame decodes one at a time through
 ``DicomDecodedFrameReader`` — so compressed multiframe objects use exactly the
 same path as native ones when the transfer syntax has an active backend.
+Frame VOI uses Per-Frame-over-Shared precedence and remains available for each
+spatially ordered slice. The first valid Frame VOI window in that order is the
+deterministic volume default; top-level Window Center/Width is used only when
+no Frame VOI window is valid.
 Unsupported multiframe shapes fail typed with SOP Class, frame count,
-transfer syntax, and the missing functional-group context.
+transfer syntax, and the missing functional-group context. This qualification
+is limited to one spatial stack. Dimension Organization is not interpreted to
+partition multiple stacks; callers must
+reject or isolate those inputs before volume assembly.
+
+``DicomEnhancedMultiframeConverter`` additionally converts qualified Enhanced
+CT/MR single-stack objects to classic CT/MR Image Storage. It requires native
+uncompressed or RLE Lossless MONOCHROME1/2 with one sample, aligned 8/16-bit
+stored values, Study/Series/SOP and Frame of Reference UIDs, complete plane
+geometry, positive Pixel Spacing, and at most the single Stack ID/In-Stack
+Position dimension pair. Output frames are spatially ordered, carry fresh
+Series/SOP UIDs, `DERIVED\SECONDARY`, and a one-based source-frame reference,
+and are written as native Explicit VR Little Endian. Shared/Per-Frame geometry,
+Pixel Measures, rescale, and Frame VOI are flattened with Per-Frame-over-Shared
+precedence. Each output is reopened and its identities, provenance, attributes,
+pixels, transfer syntax and absence of multiframe/dimension/offset-table tags
+are checked before the result is returned. RGB, wider storage, extra stacks or
+dimensions, incomplete geometry and every other SOP Class/transfer syntax fail
+without producing a result. Catalog replacement, reference policy and audit are
+application responsibilities outside DicomCore.
 
 Typical usage sequence:
 
@@ -254,9 +280,9 @@ DicomCore can read files from any DICOM Image Storage SOP Class. The library is 
 | SOP Class | UID | Typical Use | Tested |
 |-----------|-----|-------------|--------|
 | **CT Image Storage** | 1.2.840.10008.5.1.4.1.1.2 | Computed Tomography | ✅ Yes |
-| **Enhanced CT Image Storage** | 1.2.840.10008.5.1.4.1.1.2.1 | CT with enhanced metadata | ✅ Synthetic Functional Groups |
+| **Enhanced CT Image Storage** | 1.2.840.10008.5.1.4.1.1.2.1 | CT with enhanced metadata | ✅ Synthetic single-stack Functional Groups |
 | **MR Image Storage** | 1.2.840.10008.5.1.4.1.1.4 | Magnetic Resonance Imaging | ✅ Yes |
-| **Enhanced MR Image Storage** | 1.2.840.10008.5.1.4.1.1.4.1 | MR with enhanced metadata | ✅ Synthetic Functional Groups |
+| **Enhanced MR Image Storage** | 1.2.840.10008.5.1.4.1.1.4.1 | MR with enhanced metadata | ✅ Synthetic single-stack Functional Groups |
 | **Enhanced MR Color Image Storage** | 1.2.840.10008.5.1.4.1.1.4.3 | Color MR images | ⚠️ Limited |
 | **Segmentation Storage** | 1.2.840.10008.5.1.4.1.1.66.4 | Binary and fractional labelmaps | ✅ Synthetic SEG |
 | **RT Structure Set Storage** | 1.2.840.10008.5.1.4.1.1.481.3 | Structure contours | ✅ Synthetic RTSTRUCT |
@@ -600,10 +626,11 @@ JPIP helper APIs with caller-configured endpoints and transports:
 ### 7.1 Build-Time Configuration
 
 DicomCore requires:
-- **Minimum iOS Version:** 13.0
-- **Minimum macOS Version:** 12.0
-- **Swift Version:** 5.7 or later
-- **Xcode Version:** 14.0 or later
+- **Minimum iOS Version:** 26.0
+- **Minimum visionOS Version:** 26.0
+- **Minimum macOS Version:** 26.0
+- **Swift Version:** 6.2 toolchain
+- **Xcode Version:** 26.0 or later
 
 ### 7.2 Runtime Configuration
 
@@ -649,7 +676,7 @@ Deflated Explicit VR Little Endian uses system zlib for raw deflate/inflate. JPE
 | **JPEG Hierarchical** | JPEG processes other than Process 14 unsupported | Convert to supported transfer syntax |
 | **Unsupported color combinations** | `DicomColorConversionError.unsupportedColorPath` reports photometric interpretation, sample count, planar layout, bit depth, and transfer syntax context | Convert through a supported transfer syntax/color layout |
 | **Undefined-length non-SQ** | Non-SQ undefined values inside sequences throw parser errors | Use explicit lengths |
-| **Incomplete PET SUV metadata** | SUV helpers return no physical value and report missing DICOM tags | Preserve Units, Patient Weight/Size/Sex, radiopharmaceutical dose, decay, and timing metadata |
+| **Incomplete PET SUV metadata** | SUV helpers return no physical value and report missing DICOM tags; GML passthrough to SUVbw also rejects an explicit non-BW SUV Type | Preserve Units, SUV Type, Patient Weight/Size/Sex, radiopharmaceutical dose, decay, and timing metadata |
 | **Large Files** | Files >1GB may consume significant memory | Use memory-efficient workflows, process in chunks |
 
 ### 8.2 Functional Limitations
@@ -665,7 +692,7 @@ Deflated Explicit VR Little Endian uses system zlib for raw deflate/inflate. JPE
 | **Limited Video Scope** | Video writing/parsing encapsulates and exposes caller-provided MPEG-2/H.264/H.265 streams with metadata; native video decoding is delegated to the application/player backend |
 | **Limited Presentation State Scope** | GSPS graphic annotations are parsed/built for object exchange; display application of GSPS transforms remains caller-owned |
 
-### 8.3 Current Scope
+### 8.3 Backlog Alignment
 
 Remaining limitations in this conformance statement are explicitly scoped:
 
@@ -683,19 +710,20 @@ Remaining limitations in this conformance statement are explicitly scoped:
   ``DicomSRSupportMatrix`` and ``DicomSRSemanticValidator``.
 - Export, print, waveform, and video limitations are exposed through
   ``DicomExportSupportMatrix/packageDefault`` and typed unsupported-path errors.
-- Decoder parity documentation is covered by the package-local conformance
-  manifests and reconciliation tests.
-- Presentation and interaction policy is caller-owned. DICOM-Swift ends at
-  decoded values, frames, series, and explicit exports.
+- Isis-level decoder parity documentation was closed separately in issue #1064;
+  package documentation reconciliation is covered by issue #1077.
+- MTK rendering and viewer workflow limitations are outside DICOM-Swift
+  package conformance and are tracked by the open MTK issues #1078 through
+  #1090.
 
 ### 8.4 Performance Considerations
 
 | Scenario | Expected Performance | Recommendation |
 |----------|---------------------|----------------|
-| **File Opening** | <50ms for typical files | Use async APIs to avoid blocking callers |
+| **File Opening** | <50ms for typical files | Use async APIs for UI responsiveness |
 | **Pixel Loading** | 100-500ms for compressed data | Load pixels in background task |
 | **Series Loading** | 2-5s for 100-slice CT series | Use progress callbacks, enable concurrency |
-| **Window/Level (CPU)** | ~2ms per 512×512 image | Suitable for batch or interactive consumers |
+| **Window/Level (CPU)** | ~2ms per 512×512 image | Acceptable for interactive UI |
 | **Window/Level (GPU)** | ~2.2ms per 1024×1024 image | Use for high-res or batch processing |
 
 ---
@@ -801,8 +829,8 @@ DicomCore is provided as a software development library for creating application
 ### Safe Part 10 Rewrite and Anonymization
 
 `DicomAnonymizer` (issue #1236) rewrites Part 10 files under a
-`DicomRewritePolicy` of per-tag keep/remove/replace/remapUID actions plus a
-private-tag switch. Rules apply recursively inside sequence items. The
+`DicomRewritePolicy` of per-tag keep/remove/replace/remapUID actions plus
+private-tag and Overlay Plane switches. Rules apply recursively inside sequence items. The
 transfer syntax and file meta consistency are preserved on write; Pixel Data
 is always carried byte-for-byte — encapsulated payloads (Basic/Extended
 Offset Tables, fragments, and delimiter) feed the writer's pass-through
@@ -818,17 +846,27 @@ decision is audited (changed/removed/kept/blocked/unsupported/remapped) with
 element paths and without recording original PHI values; invalid inputs fail
 with typed errors.
 
-The `defaultAnonymization` baseline replaces patient identity fields, blanks
-Accession Number and Study ID, removes birth date, other patient names,
-address, telephone numbers, referring physician, institution name, Station
-Name, Device Serial Number, Requested Procedure ID, and private tags, and
-remaps study/series/instance/frame-of-reference and referenced SOP UIDs.
-Referenced Study Sequence (0008,1110) and Referenced Series Sequence
-(0008,1115) are retained with their linkage UIDs remapped recursively. The
-baseline is NOT the complete PS3.15 Basic De-identification Profile —
-notably uncovered: dates and times beyond the birth date, operator/physician
-names beyond the referring physician, free-text description and comment
-fields, and the institution address.
+The `defaultAnonymization` policy is an Isis PS3.15 Basic Confidentiality
+baseline, not a claim of complete Basic Application Level Confidentiality
+Profile conformance. It replaces or removes patient, personnel, institution,
+device, procedure, common descriptor, and SR text fields; removes private
+attributes and every element in repeating Overlay Plane groups 6000-601E;
+removes unoverridden DA, DT, and TM values recursively; and remaps
+the UID attributes assigned the Basic Profile `U` action in PS3.15 2026c Table
+E.1-1. Exact replacements can seed top-level Study, Series, and SOP Instance
+UIDs while every nested reference uses the same map. Output records Patient
+Identity Removed (0012,0062), De-identification Method (0012,0063), and
+Longitudinal Temporal Information Modified (0028,0303).
+
+Pixel Data remains byte-for-byte unchanged, including retired overlay bits
+embedded in native Pixel Data; removing the corresponding 60xx group makes
+those bits undiscoverable as a DICOM Overlay Plane but is not pixel cleaning.
+The result warns when Burned In
+Annotation (0028,0301) is `YES`, missing, or unrecognized; only `NO` clears the
+warning. Clean Pixel Data, Clean Recognizable Visual Features, Clean Graphics,
+Clean Structured Content, Clean Descriptors, retention options, and cleaning
+of encapsulated documents are not implemented. SR text redaction is
+conservative and is not a claim of the Clean Structured Content Option.
 
 ### Executable Transfer Syntax Transcoding
 

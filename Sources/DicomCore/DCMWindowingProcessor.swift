@@ -121,7 +121,7 @@ public enum ProcessingMode {
     /// GPU-based processing using Metal compute shaders
     /// - Best for: Large images (≥800×800 pixels), modern hardware
     /// - Performance: 3.94× speedup on 1024×1024 images vs vDSP
-    /// - Requires: Metal-capable device (all iOS 13+, macOS 12+ devices)
+    /// - Requires: Metal-capable device
     case metal
 
     /// Automatic selection based on image size
@@ -186,10 +186,10 @@ public enum ProcessingMode {
 ///     processingMode: .metal
 /// )
 ///
-/// // Create a CGImage for export or downstream processing
+/// // Display with CGImage
 /// if let pixels8 = pixels8,
 ///    let cgImage = createCGImage(from: pixels8, width: decoder.width, height: decoder.height) {
-///     export(cgImage)
+///     imageView.image = UIImage(cgImage: cgImage)
 /// }
 /// ```
 ///

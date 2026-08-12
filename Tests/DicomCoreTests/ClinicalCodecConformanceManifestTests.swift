@@ -25,7 +25,8 @@ final class ClinicalCodecConformanceManifestTests: XCTestCase {
         "pixel.near-lossless", "pixel.lossy",
         "negative.truncated-codestream-fragment", "negative.inconsistent-frame-offsets",
         "negative.malformed-marker-box-bin", "negative.decompression-bomb-dimensions",
-        "negative.integer-overflow-boundary", "negative.unsupported-component-precision-color"
+        "negative.integer-overflow-boundary", "negative.unsupported-component-precision-color",
+        "negative.corrupt-derived-artifact"
     ]
 
     func test_manifestEnumeratesEveryRequiredCategoryAndKeepsGapsVisible() throws {
@@ -115,7 +116,15 @@ final class ClinicalCodecConformanceManifestTests: XCTestCase {
             XCTAssertFalse(item.requiredGates.isEmpty, item.id)
             XCTAssertTrue(allowedExpectedResults.contains(item.expectedResult), item.id)
             XCTAssertTrue(allowedVerdicts.contains(item.supportVerdict), item.id)
-            XCTAssertTrue(FileManager.default.fileExists(atPath: packageRoot().appendingPathComponent(item.testPath).path), item.id)
+            if item.testPath.hasPrefix("../") {
+                let localGates: Set<String> = ["quick", "fixture", "runtime", "release"]
+                XCTAssertTrue(Set(item.requiredGates).isDisjoint(with: localGates), item.id)
+            } else {
+                XCTAssertTrue(
+                    FileManager.default.fileExists(atPath: packageRoot().appendingPathComponent(item.testPath).path),
+                    item.id
+                )
+            }
         }
 
         XCTAssertFalse(manifest.commands.fixture.isEmpty)

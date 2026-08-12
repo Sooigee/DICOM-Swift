@@ -689,6 +689,20 @@ public extension DCMDecoder {
             return value
         }
 
+        // LT is VM 1 and permits significant leading whitespace, line breaks,
+        // and a literal backslash. Routing it through `dicomMultiValues` would
+        // trim the value and split it as though it were a multi-valued UI
+        // string. Remove only the single byte that can be DICOM even-length
+        // padding, then preserve the decoded text verbatim.
+        if vr == .LT, let metadata, let raw = rawValueData(for: metadata) {
+            var unpadded = raw
+            if let last = unpadded.last, last == 0x20 || last == 0x00 {
+                unpadded.removeLast()
+            }
+            let value = activeCharacterSet.decodePreservingWhitespace(unpadded)
+            return value.isEmpty ? .empty : .strings([value])
+        }
+
         let rawString = infoUnsafe(for: tag)
         let values = rawString.dicomMultiValues
         return values.isEmpty ? .empty : .strings(values)

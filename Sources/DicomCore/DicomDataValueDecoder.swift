@@ -29,6 +29,12 @@ enum DicomDataValueDecoder {
             return .unsignedIntegers(
                 data.dicomIntegerValues(as: UInt16.self, littleEndian: littleEndian).map(UInt.init)
             )
+        case .AT:
+            let components = data.dicomIntegerValues(as: UInt16.self, littleEndian: littleEndian)
+            guard components.count.isMultiple(of: 2) else { return .empty }
+            return .unsignedIntegers(stride(from: 0, to: components.count, by: 2).map { index in
+                UInt(components[index]) << 16 | UInt(components[index + 1])
+            })
         case .OB, .OW, .OV, .UN:
             return .bytes(Data(data))
         default:

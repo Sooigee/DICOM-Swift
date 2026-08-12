@@ -117,7 +117,7 @@ func loadDICOMAsync() async {
     }
 }
 
-// Usage in any asynchronous context
+// Usage in SwiftUI or async context
 Task {
     await loadDICOMAsync()
 }
@@ -2189,7 +2189,7 @@ do {
 }
 ```
 
-## Complete Example: DICOM Image Processing Pipeline
+## Complete Example: DICOM Viewer Component
 
 ```swift
 import DicomCore

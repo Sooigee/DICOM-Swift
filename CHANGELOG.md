@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-12
+
 ### Changed
 
 - Added release-prep guidance, including a first-stable-release gate checklist in `RELEASING.md`.
 - Reduced DIMSE receive overhead by waiting for complete requested chunks and retaining decoded P-DATA payloads as zero-copy buffer slices.
 
 ### Added
+
+- Frame VOI preservation for Enhanced CT/MR Functional Groups, including
+  Shared/Per-Frame precedence, spatially ordered per-slice windows, and a
+  deterministic default-window fallback.
 
 - **Swift-idiomatic throwing initializers** for DICOM file loading:
   - `try DCMDecoder(contentsOf: url)` and `try DCMDecoder(contentsOfFile: path)`
@@ -152,6 +158,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/ThalesMMS/DICOM-Swift/compare/1.0.1...HEAD
+[Unreleased]: https://github.com/ThalesMMS/DICOM-Swift/compare/1.5.0...HEAD
+[1.5.0]: https://github.com/ThalesMMS/DICOM-Swift/compare/1.4.0...1.5.0
 [1.0.1]: https://github.com/ThalesMMS/DICOM-Swift/compare/1.0.0...1.0.1
 [1.0.0]: https://github.com/ThalesMMS/DICOM-Swift/releases/tag/1.0.0

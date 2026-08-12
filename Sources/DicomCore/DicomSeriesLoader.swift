@@ -347,6 +347,9 @@ public struct DicomSeriesVolume: Sendable {
     /// Per-slice rescale parameters in the same order as the assembled voxel buffer.
     public let sliceRescaleParameters: [DicomSliceRescaleParameters]
 
+    /// Per-slice Frame VOI values in the same order as the assembled voxel buffer.
+    public let sliceVOIs: [DicomFrameVOI?]
+
     public init(voxels: Data,
                 width: Int,
                 height: Int,
@@ -369,7 +372,8 @@ public struct DicomSeriesVolume: Sendable {
                 frameOfReferenceUID: String? = nil,
                 quantitativeValueProfile: DicomQuantitativeValueProfile = .empty,
                 imageInstances: [DicomSeriesImageInstance] = [],
-                sliceRescaleParameters: [DicomSliceRescaleParameters] = []) {
+                sliceRescaleParameters: [DicomSliceRescaleParameters] = [],
+                sliceVOIs: [DicomFrameVOI?] = []) {
         self.voxels = voxels
         self.width = width
         self.height = height
@@ -393,6 +397,7 @@ public struct DicomSeriesVolume: Sendable {
         self.quantitativeValueProfile = quantitativeValueProfile
         self.imageInstances = imageInstances
         self.sliceRescaleParameters = sliceRescaleParameters
+        self.sliceVOIs = sliceVOIs
     }
 }
 

@@ -188,13 +188,11 @@ public struct DicomDecodedFrameReader: Sendable {
 
     /// Cancellation-aware variant: the decode runs off the caller's thread
     /// and honors `Task` cancellation before extraction starts.
-    @available(macOS 10.15, iOS 13.0, *)
     /// Decodes one frame asynchronously while honoring task cancellation.
     public func frame(at index: Int) async throws -> DicomDecodedFrame {
         try await frameExecution(at: index).frame
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     /// Decodes one frame and reports the backend/fallback decision that produced it.
     public func frameExecution(
         at index: Int,
@@ -242,7 +240,6 @@ public struct DicomDecodedFrameReader: Sendable {
     /// Reports codestream-qualified partial-decode capabilities for one frame.
     /// Unsupported transfer syntaxes return `.unavailable`; malformed frame
     /// mappings or codestream headers remain typed errors.
-    @available(macOS 10.15, iOS 13.0, *)
     /// Reports direct partial-decode support and codestream limits for a frame.
     public func partialDecodeCapabilities(at index: Int = 0) async throws
         -> DicomPartialFrameDecodeCapabilities {
@@ -273,7 +270,6 @@ public struct DicomDecodedFrameReader: Sendable {
 
     /// Executes a qualified JPEG 2000 partial decode without materializing a
     /// full frame. Callers choose any non-JPEG-2000 fallback explicitly.
-    @available(macOS 10.15, iOS 13.0, *)
     /// Decodes a spatial, resolution, or quality subset of one qualified frame.
     public func frame(
         at index: Int,
@@ -410,7 +406,6 @@ public struct DicomDecodedFrameReader: Sendable {
     /// Streams decoded frames one at a time (memory-bounded: only the
     /// in-flight frame is materialized). Cancelling the consuming task
     /// stops decoding before the next frame.
-    @available(macOS 10.15, iOS 13.0, *)
     /// Streams decoded frames and stops producing values when the task is cancelled.
     public func frames(in range: Range<Int>? = nil) -> AsyncThrowingStream<DicomDecodedFrame, Error> {
         let reader = self
@@ -467,7 +462,6 @@ public struct DicomDecodedFrameReader: Sendable {
 
     // MARK: - Compressed path
 
-    @available(macOS 10.15, iOS 13.0, *)
     private func decodeJ2KFrame(
         at index: Int,
         frameCount: Int,
@@ -534,7 +528,6 @@ public struct DicomDecodedFrameReader: Sendable {
         )
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     private func decodeJPEGLSFrame(
         at index: Int,
         frameCount: Int,
@@ -598,7 +591,6 @@ public struct DicomDecodedFrameReader: Sendable {
         )
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     private func decodeJPEGXLFrame(
         at index: Int,
         frameCount: Int,

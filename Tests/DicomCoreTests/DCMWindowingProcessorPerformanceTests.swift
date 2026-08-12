@@ -535,7 +535,7 @@ final class DCMWindowingProcessorPerformanceTests: XCTestCase {
         - Verified across all image sizes and window/level values
 
         Hardware Requirements:
-        - Metal-capable device (all iOS 13+, macOS 12+ devices)
+        - Metal-capable device
         - Apple Silicon: Optimal performance
         - Intel Mac: Good performance with discrete GPU
 

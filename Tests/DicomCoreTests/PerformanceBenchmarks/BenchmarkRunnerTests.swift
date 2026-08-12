@@ -68,7 +68,7 @@ final class BenchmarkRunnerTests: XCTestCase {
         XCTAssertGreaterThan(result.meanTime, 0, "Mean time should be positive")
         XCTAssertGreaterThanOrEqual(result.stdDevTime, 0, "Std dev should be non-negative")
         XCTAssertGreaterThanOrEqual(result.medianTime, 0, "Median time should be non-negative after baseline subtraction")
-        XCTAssertGreaterThan(result.p95Time, 0, "P95 time should exceed timer resolution")
+        XCTAssertGreaterThanOrEqual(result.p95Time, 0, "P95 time should be non-negative after baseline subtraction")
 
         // Lock overhead should be very fast (nanoseconds to microseconds)
         XCTAssertLessThan(result.meanTime, 0.001, "Lock overhead should be <1ms")
@@ -344,8 +344,14 @@ final class BenchmarkRunnerTests: XCTestCase {
         XCTAssertGreaterThan(result.minTime, 0, "Min time should be positive")
         XCTAssertLessThanOrEqual(result.minTime, result.meanTime, "Min should be ≤ mean")
         XCTAssertLessThanOrEqual(result.meanTime, result.maxTime, "Mean should be ≤ max")
+        XCTAssertLessThanOrEqual(result.minTime, result.medianTime, "Min should be ≤ median")
         XCTAssertLessThanOrEqual(result.medianTime, result.maxTime, "Median should be ≤ max")
-        XCTAssertGreaterThanOrEqual(result.p95Time, result.meanTime, "P95 should be ≥ mean (typically)")
+
+        // Percentiles are ordered by construction, so assert that ordering rather than
+        // P95 ≥ mean: timing samples are right-skewed, and a single slow iteration can
+        // legitimately pull the mean above the 95th percentile.
+        XCTAssertGreaterThanOrEqual(result.p95Time, result.medianTime, "P95 should be ≥ median")
+        XCTAssertLessThanOrEqual(result.p95Time, result.p99Time, "P95 should be ≤ P99")
         XCTAssertLessThanOrEqual(result.p95Time, result.maxTime, "P95 should be ≤ max")
     }
 }

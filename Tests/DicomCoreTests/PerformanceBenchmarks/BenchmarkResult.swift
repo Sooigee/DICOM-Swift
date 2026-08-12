@@ -6,8 +6,8 @@
 //  Contains timing measurements and statistical analysis including
 //  mean, standard deviation, coefficient of variation, and percentiles.
 //
-//  Follows timing patterns from DCMDecoderPerformanceTests.swift with
-//  CFAbsoluteTimeGetCurrent() for precise measurements.
+//  Timing samples are produced by BenchmarkRunner using BenchmarkClock, a
+//  monotonic nanosecond clock.
 //
 //  Created by automated performance benchmarking suite.
 //

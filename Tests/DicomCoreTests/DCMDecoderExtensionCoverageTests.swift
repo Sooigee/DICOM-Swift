@@ -388,6 +388,11 @@ final class DCMDecoderExtensionCoverageTests: XCTestCase {
 
     // MARK: - DCMDecoder+DicomTagAPI: DicomTag enum overload equivalence
 
+    func test_pixelValueRangeTags_haveStandardDicomValues() {
+        XCTAssertEqual(DicomTag.smallestImagePixelValue.rawValue, 0x0028_0106)
+        XCTAssertEqual(DicomTag.largestImagePixelValue.rawValue, 0x0028_0107)
+    }
+
     func testDicomTagEnumOverloadEquivalenceForAllMethods() {
         let decoder = DCMDecoder()
 

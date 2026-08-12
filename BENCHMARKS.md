@@ -112,13 +112,13 @@ The checked-in benchmark reports in this repository are point-in-time measuremen
 
 | Component | Specification |
 |-----------|---------------|
-| **Platform** | macOS 14.0+ or later |
+| **Platform** | macOS 26.0+ |
 | **Architecture** | arm64 (Apple Silicon) |
 | **Reference Hardware** | Apple Silicon Mac |
 | **Expected CPU** | Apple M-series |
 | **Processor Cores** | 8+ logical cores |
-| **Swift Version** | 5.9+ |
-| **Xcode Version** | 15.0+ |
+| **Swift Version** | 6.0+ toolchain |
+| **Xcode Version** | 26.0+ |
 | **Metal Support** | Metal 3.0+ |
 
 ### Repository Integration

@@ -89,8 +89,10 @@ public struct DicomExportSupportMatrix: Equatable, Sendable {
             metadataPreservation: "Film session label, film box display settings, queue status, and "
                 + "returned image box SOP Instance UIDs are preserved",
             unsupportedCases: "Color print, Presentation LUT service, annotation boxes, "
-                + "printer configuration/status services, and storage commitment",
-            typedFailure: "DicomPrintManagementError.unsupportedService"
+                + "printer configuration/status services, storage commitment, and film boxes for "
+                + "which the printer grants fewer image boxes than the job requested",
+            typedFailure: "DicomPrintManagementError.unsupportedService or "
+                + "insufficientImageBoxes(requested:granted:)"
         ),
         DicomExportSupportRow(
             feature: "Waveform",

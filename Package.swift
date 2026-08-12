@@ -5,8 +5,9 @@ let package = Package(
     name: "DICOMSwift",
     defaultLocalization: "en",
     platforms: [
-        .iOS(.v18),
-        .macOS(.v15)
+        .iOS("26.0"),
+        .visionOS("26.0"),
+        .macOS("26.0")
     ],
     products: [
         .library(name: "DicomCore", targets: ["DicomCore"]),
@@ -25,8 +26,16 @@ let package = Package(
             name: "DicomCore",
             dependencies: [
                 .product(name: "ZIPFoundation", package: "ZIPFoundation"),
-                .product(name: "J2KCore", package: "J2KSwift"),
-                .product(name: "J2KCodec", package: "J2KSwift"),
+                .product(
+                    name: "J2KCore",
+                    package: "J2KSwift",
+                    condition: .when(platforms: [.iOS, .macOS])
+                ),
+                .product(
+                    name: "J2KCodec",
+                    package: "J2KSwift",
+                    condition: .when(platforms: [.iOS, .macOS])
+                ),
                 .product(name: "JPEGLS", package: "JLSwift"),
                 .product(name: "JXLSwift", package: "JXLSwift")
             ],
@@ -38,7 +47,7 @@ let package = Package(
                 .process("Resources")
             ],
             linkerSettings: [
-                .linkedFramework("Metal", .when(platforms: [.iOS, .macOS])),
+                .linkedFramework("Metal", .when(platforms: [.iOS, .visionOS, .macOS])),
                 .linkedLibrary("z")
             ]
         ),

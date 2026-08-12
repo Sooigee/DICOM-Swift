@@ -6,9 +6,9 @@
 //  Provides comprehensive benchmarking for decoder operations,
 //  windowing operations (vDSP/Metal), and performance comparisons.
 //
-//  Follows timing patterns from DCMDecoderPerformanceTests.swift and
-//  DCMWindowingProcessorPerformanceTests.swift with CFAbsoluteTimeGetCurrent()
-//  for precise measurements.
+//  All timings come from BenchmarkClock, a monotonic nanosecond clock. Operations
+//  that finish inside a single clock tick are timed in batches and reported as a
+//  per-operation average, so no sample can collapse to zero.
 //
 //  Created by automated performance benchmarking suite.
 //
@@ -86,11 +86,12 @@ public final class BenchmarkRunner {
         var counter = 0
 
         for _ in 0..<iterations {
-            let start = CFAbsoluteTimeGetCurrent()
+            let start = BenchmarkClock.now()
             for _ in 0..<operationsPerIteration {
                 baselineCounter &+= 1
+                benchmarkBlackHole(baselineCounter)
             }
-            let elapsed = (CFAbsoluteTimeGetCurrent() - start) / Double(operationsPerIteration)
+            let elapsed = BenchmarkClock.secondsElapsed(since: start) / Double(operationsPerIteration)
             baselineTimings.append(elapsed)
         }
 
@@ -99,36 +100,49 @@ public final class BenchmarkRunner {
         // Batch tiny lock/unlock cycles so each timing sample is above timer resolution,
         // then subtract the unlocked loop baseline to isolate lock overhead.
         for _ in 0..<iterations {
-            let start = CFAbsoluteTimeGetCurrent()
+            let start = BenchmarkClock.now()
             for _ in 0..<operationsPerIteration {
                 lock.lock()
                 counter &+= 1
                 lock.unlock()
+                benchmarkBlackHole(counter)
             }
-            let elapsed = (CFAbsoluteTimeGetCurrent() - start) / Double(operationsPerIteration)
+            let elapsed = BenchmarkClock.secondsElapsed(since: start) / Double(operationsPerIteration)
             timings.append(max(0, elapsed - baselineElapsed))
         }
 
-        _ = baselineCounter
-        _ = counter
         return try BenchmarkResult(timings: timings, peakMemoryBytes: BenchmarkMemorySampler.currentPeakResidentMemoryBytes())
     }
 
     /// Benchmark decoder initialization performance
     ///
-    /// Measures the time to create a new decoder instance.
+    /// Measures the time to create a new decoder instance. A single allocation can
+    /// finish inside one clock tick, so each sample times a batch of allocations and
+    /// records the per-allocation average.
     ///
     /// - Returns: Benchmark result for decoder initialization
     /// - Throws: BenchmarkError if benchmark fails
     public func benchmarkDecoderInit() throws -> BenchmarkResult {
         let iterations = config.benchmarkIterations
+        let allocationsPerSample = 200
         var timings = [Double]()
         timings.reserveCapacity(iterations)
 
+        // Warmup with the same batch shape as a measured sample, so one-off costs
+        // (lazy globals, malloc arena growth) are paid before timing starts instead
+        // of landing in the first sample and skewing the mean.
+        for _ in 0..<config.warmupIterations {
+            for _ in 0..<allocationsPerSample {
+                benchmarkBlackHole(DCMDecoder())
+            }
+        }
+
         for _ in 0..<iterations {
-            let start = CFAbsoluteTimeGetCurrent()
-            _ = DCMDecoder()
-            let elapsed = CFAbsoluteTimeGetCurrent() - start
+            let start = BenchmarkClock.now()
+            for _ in 0..<allocationsPerSample {
+                benchmarkBlackHole(DCMDecoder())
+            }
+            let elapsed = BenchmarkClock.secondsElapsed(since: start) / Double(allocationsPerSample)
             timings.append(elapsed)
         }
 
@@ -144,13 +158,21 @@ public final class BenchmarkRunner {
     public func benchmarkDecoderValidation() throws -> BenchmarkResult {
         let decoder = DCMDecoder()
         let iterations = config.benchmarkIterations
+        let checksPerSample = 100
         var timings = [Double]()
         timings.reserveCapacity(iterations)
 
+        // Warmup so first-call costs stay out of the measured samples
+        for _ in 0..<config.warmupIterations {
+            benchmarkBlackHole(decoder.getValidationStatus())
+        }
+
         for _ in 0..<iterations {
-            let start = CFAbsoluteTimeGetCurrent()
-            _ = decoder.getValidationStatus()
-            let elapsed = CFAbsoluteTimeGetCurrent() - start
+            let start = BenchmarkClock.now()
+            for _ in 0..<checksPerSample {
+                benchmarkBlackHole(decoder.getValidationStatus())
+            }
+            let elapsed = BenchmarkClock.secondsElapsed(since: start) / Double(checksPerSample)
             timings.append(elapsed)
         }
 
@@ -166,20 +188,36 @@ public final class BenchmarkRunner {
     public func benchmarkMetadataAccess() throws -> BenchmarkResult {
         let decoder = DCMDecoder()
         let iterations = config.benchmarkIterations
+        let checksPerSample = 100
         var timings = [Double]()
         timings.reserveCapacity(iterations)
 
+        // Warmup so first-call costs (tag dictionary loading, cache population) stay
+        // out of the measured samples
+        for _ in 0..<config.warmupIterations {
+            accessMetadata(on: decoder)
+        }
+
         for _ in 0..<iterations {
-            let start = CFAbsoluteTimeGetCurrent()
-            // Access multiple metadata fields (synchronized methods)
-            _ = decoder.info(for: .patientName)
-            _ = decoder.intValue(for: .rows)
-            _ = decoder.doubleValue(for: .pixelSpacing)
-            let elapsed = CFAbsoluteTimeGetCurrent() - start
+            let start = BenchmarkClock.now()
+            for _ in 0..<checksPerSample {
+                accessMetadata(on: decoder)
+            }
+            let elapsed = BenchmarkClock.secondsElapsed(since: start) / Double(checksPerSample)
             timings.append(elapsed)
         }
 
         return try BenchmarkResult(timings: timings, peakMemoryBytes: BenchmarkMemorySampler.currentPeakResidentMemoryBytes())
+    }
+
+    /// Read the metadata fields sampled by `benchmarkMetadataAccess()`
+    ///
+    /// - Parameter decoder: Decoder to read from
+    private func accessMetadata(on decoder: DCMDecoder) {
+        // Access multiple metadata fields (synchronized methods)
+        benchmarkBlackHole(decoder.info(for: .patientName))
+        benchmarkBlackHole(decoder.intValue(for: .rows))
+        benchmarkBlackHole(decoder.doubleValue(for: .pixelSpacing))
     }
 
     // MARK: - Windowing Benchmarks
@@ -208,14 +246,14 @@ public final class BenchmarkRunner {
 
         // Benchmark
         for _ in 0..<iterations {
-            let start = CFAbsoluteTimeGetCurrent()
-            _ = DCMWindowingProcessor.applyWindowLevel(
+            let start = BenchmarkClock.now()
+            benchmarkBlackHole(DCMWindowingProcessor.applyWindowLevel(
                 pixels16: pixels,
                 center: config.windowCenter,
                 width: config.windowWidth,
                 processingMode: .vdsp
-            )
-            let elapsed = CFAbsoluteTimeGetCurrent() - start
+            ))
+            let elapsed = BenchmarkClock.secondsElapsed(since: start)
             timings.append(elapsed)
 
             if config.verbose {
@@ -254,14 +292,14 @@ public final class BenchmarkRunner {
 
         // Benchmark
         for _ in 0..<iterations {
-            let start = CFAbsoluteTimeGetCurrent()
-            _ = DCMWindowingProcessor.applyWindowLevel(
+            let start = BenchmarkClock.now()
+            benchmarkBlackHole(DCMWindowingProcessor.applyWindowLevel(
                 pixels16: pixels,
                 center: config.windowCenter,
                 width: config.windowWidth,
                 processingMode: .metal
-            )
-            let elapsed = CFAbsoluteTimeGetCurrent() - start
+            ))
+            let elapsed = BenchmarkClock.secondsElapsed(since: start)
             timings.append(elapsed)
 
             if config.verbose {

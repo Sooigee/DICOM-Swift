@@ -143,6 +143,54 @@ final class DicomQuantitativeValuesTests: XCTestCase {
         XCTAssertEqual(metadata.diagnostics(for: .bw), [])
     }
 
+    func testSUVBodyWeightRejectsGMLDeclaredAsLeanBodyMass() throws {
+        let url = try makeTemporaryDICOM(
+            pixelValues: [5],
+            modality: "PT",
+            extraElements: [
+                string(.units, vr: .CS, "GML"),
+                string(.suvType, vr: .CS, "LBM")
+            ]
+        )
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let decoder = try DCMDecoder(contentsOf: url)
+        let value = try XCTUnwrap(decoder.quantitativeValue(at: 0, suvType: .bw))
+        let metadata = try XCTUnwrap(decoder.quantitativeValueProfile.suvMetadata)
+
+        XCTAssertNil(value.physicalValue)
+        XCTAssertTrue(metadata.diagnostics(for: .bw).contains { diagnostic in
+            diagnostic.code == "incompatible_suv_type"
+                && diagnostic.tag == DicomTag.suvType.rawValue
+        })
+    }
+
+    func testSUVBodyWeightAppliesHalfLifeDecayBetweenInjectionAndAcquisition() throws {
+        let url = try makeTemporaryDICOM(
+            pixelValues: [5_000],
+            modality: "PT",
+            extraElements: [
+                string(.units, vr: .CS, "BQML"),
+                ds(.patientWeight, ["75"]),
+                string(.acquisitionTime, vr: .TM, "100000"),
+                sequence(.radiopharmaceuticalInformationSequence, [
+                    DicomDataSet(elements: [
+                        ds(.radionuclideTotalDose, ["370000000"]),
+                        ds(.radionuclideHalfLife, ["6586.2"]),
+                        string(.radiopharmaceuticalStartTime, vr: .TM, "090000")
+                    ])
+                ])
+            ]
+        )
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let decoder = try DCMDecoder(contentsOf: url)
+        let value = try XCTUnwrap(decoder.quantitativeValue(at: 0, suvType: .bw))
+
+        XCTAssertEqual(value.physicalValue ?? .nan, 1.480_375_080_6, accuracy: 0.000_000_1)
+        XCTAssertEqual(decoder.quantitativeValueProfile.suvMetadata?.diagnostics(for: .bw), [])
+    }
+
     func testSUVReportsMissingRequiredPETMetadata() throws {
         let url = try makeTemporaryDICOM(
             pixelValues: [1000],

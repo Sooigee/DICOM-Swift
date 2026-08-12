@@ -481,8 +481,8 @@ if !rescale.isIdentity {
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                  Downstream Integration                 │
-│             (CLI, server, or application)               │
+│                     Application Layer                   │
+│           (SwiftUI Views, ViewModels, etc.)             │
 └─────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -563,7 +563,7 @@ User Request
          │
          ▼
 ┌─────────────────┐
-│ Core Output     │ pixels / metadata / CGImage export
+│ Display Image   │ CGImage / SwiftUI Image
 └─────────────────┘
 ```
 

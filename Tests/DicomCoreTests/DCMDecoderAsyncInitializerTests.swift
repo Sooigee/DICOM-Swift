@@ -9,7 +9,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
 
     // MARK: - Async Throwing Initializer Tests
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerWithURLAndValidFile() async throws {
         // Get a valid DICOM file from fixtures
         let fileURL = try getAnyDICOMFile()
@@ -34,7 +33,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         XCTAssertGreaterThan(status.height, 0, "Status height should be greater than 0")
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerWithPathAndValidFile() async throws {
         // Get a valid DICOM file from fixtures
         let fileURL = try getAnyDICOMFile()
@@ -60,7 +58,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         XCTAssertGreaterThan(status.height, 0, "Status height should be greater than 0")
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerLoadsMetadata() async throws {
         // Get a valid DICOM file from fixtures
         let fileURL = try getAnyDICOMFile()
@@ -86,7 +83,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(spacing.y, 0, "Pixel spacing y should be non-negative")
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerEquivalentToSyncVersion() async throws {
         // Get a valid DICOM file from fixtures
         let fileURL = try getAnyDICOMFile()
@@ -106,7 +102,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         XCTAssertEqual(decoder1.dicomFound, decoder2.dicomFound, "Both decoders should have same DICM marker status")
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerEquivalentToLoadDICOMFileAsync() async throws {
         // Get a valid DICOM file from fixtures
         let fileURL = try getAnyDICOMFile()
@@ -124,7 +119,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
 
     // MARK: - Async Throwing Initializer Error Tests
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerWithURLThrowsForNonExistentFile() async {
         // Create URL for non-existent file
         let nonExistentURL = URL(fileURLWithPath: "/nonexistent/file.dcm")
@@ -145,7 +139,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerWithPathThrowsForNonExistentFile() async {
         // Test that async initializer throws fileNotFound error for non-existent file
         do {
@@ -163,7 +156,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerWithPathThrowsForEmptyPath() async {
         // Test that async initializer throws error for empty path
         do {
@@ -184,7 +176,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerWithURLThrowsForInvalidDICOMFile() async throws {
         // Create a temporary file that is not a valid DICOM file
         let tempDir = FileManager.default.temporaryDirectory
@@ -220,7 +211,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerWithPathThrowsForInvalidDICOMFile() async throws {
         // Create a temporary file that is not a valid DICOM file
         let tempDir = FileManager.default.temporaryDirectory
@@ -256,7 +246,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerWithURLThrowsForDirectory() async {
         // Test that async initializer throws error when given a directory path
         let directoryURL = FileManager.default.temporaryDirectory
@@ -270,7 +259,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerErrorMessagesAreDescriptive() async {
         // Test that async initializer error messages contain useful information
         do {
@@ -289,7 +277,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerDoesNotLeavePartialState() async {
         // Verify that a failed async throwing initializer doesn't leave a partially initialized object
         // This is guaranteed by Swift's error handling - the object is never returned if init throws
@@ -306,7 +293,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerConcurrentCalls() async throws {
         // Get a valid DICOM file from fixtures
         let fileURL = try getAnyDICOMFile()
@@ -333,7 +319,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerConcurrentCallsWithErrors() async {
         // Test concurrent async initializer calls with non-existent files
         async let result1 = try? DCMDecoder(contentsOfFile: "/nonexistent/file1.dcm")
@@ -348,7 +333,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerPreservesErrorInformation() async {
         // Test that async initializer preserves detailed error information
         let nonExistentPath = "/nonexistent/deeply/nested/path/file.dcm"
@@ -376,7 +360,6 @@ final class DCMDecoderAsyncInitializerTests: XCTestCase {
 
     // MARK: - Additional Async Throwing Initializer Error Tests
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testAsyncThrowingInitializerMultipleCalls() async {
         // Test multiple async throwing initializer attempts
         do {

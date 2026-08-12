@@ -57,6 +57,22 @@ public enum DicomDIMSEOperation: String, Codable, Equatable, Sendable {
     case mppsCreate = "MPPS N-CREATE"
     case mppsUpdate = "MPPS N-SET"
     case printManagement = "Print Management"
+
+    /// Whether a successful operation may hand its association back to the idle pool.
+    ///
+    /// Retrieval is the one operation where peers routinely end the association themselves as soon
+    /// as the final response is sent — some close the socket, others send A-RELEASE-RQ. Either way
+    /// the recycled association is no longer usable, and because the local open flag cannot see it,
+    /// the next request checked out against that entry fails on the leftover traffic.
+    var allowsAssociationRecycling: Bool {
+        switch self {
+        case .moveRetrieve, .getRetrieve:
+            return false
+        case .verification, .query, .modalityWorklist, .store,
+             .mppsCreate, .mppsUpdate, .printManagement:
+            return true
+        }
+    }
 }
 
 public enum DicomDIMSEProgress: Equatable, Sendable {
@@ -999,7 +1015,8 @@ public struct DicomDIMSEServiceSCU {
         let transferSyntax = context.transferSyntax ?? .explicitVRLittleEndian
         let reader = DicomDIMSEMessageReader()
 
-        _ = try sendNormalizedCreate(
+        var acceptedWarning: DicomDIMSEOperationResult?
+        let filmSessionCreate = try sendNormalizedCreate(
             operation: operation,
             affectedSOPClassUID: DicomNetworkUID.basicFilmSessionSOPClass,
             affectedSOPInstanceUID: job.filmSessionSOPInstanceUID,
@@ -1013,6 +1030,9 @@ public struct DicomDIMSEServiceSCU {
             reader: reader,
             progress: progress
         )
+        if filmSessionCreate.result.status != 0 {
+            acceptedWarning = filmSessionCreate.result
+        }
 
         let filmBoxCreate = try sendNormalizedCreate(
             operation: operation,
@@ -1028,12 +1048,15 @@ public struct DicomDIMSEServiceSCU {
             reader: reader,
             progress: progress
         )
+        if filmBoxCreate.result.status != 0, acceptedWarning == nil {
+            acceptedWarning = filmBoxCreate.result
+        }
 
-        let imageBoxUIDs = imageBoxUIDs(from: filmBoxCreate.dataSet,
-                                       expectedCount: job.imageBoxes.count)
+        let imageBoxUIDs = try imageBoxUIDs(from: filmBoxCreate.dataSet,
+                                           expectedCount: job.imageBoxes.count)
         for (index, imageBox) in job.imageBoxes.enumerated() {
             let imageBoxUID = imageBoxUIDs[index]
-            _ = try sendNormalizedSet(
+            let imageBoxResult = try sendNormalizedSet(
                 operation: operation,
                 requestedSOPClassUID: DicomNetworkUID.basicGrayscaleImageBoxSOPClass,
                 requestedSOPInstanceUID: imageBoxUID,
@@ -1046,9 +1069,12 @@ public struct DicomDIMSEServiceSCU {
                 reader: reader,
                 progress: progress
             )
+            if imageBoxResult.status != 0, acceptedWarning == nil {
+                acceptedWarning = imageBoxResult
+            }
         }
 
-        let printResult = try sendNormalizedAction(
+        let actionResult = try sendNormalizedAction(
             operation: operation,
             requestedSOPClassUID: DicomNetworkUID.basicFilmBoxSOPClass,
             requestedSOPInstanceUID: job.filmBoxSOPInstanceUID,
@@ -1060,6 +1086,9 @@ public struct DicomDIMSEServiceSCU {
             reader: reader,
             progress: progress
         )
+        let printResult = actionResult.status == 0
+            ? acceptedWarning ?? actionResult
+            : actionResult
         progress?(.completed(operation: operation, status: printResult.status))
         return DicomPrintJobResult(operation: printResult,
                                    filmSessionSOPInstanceUID: job.filmSessionSOPInstanceUID,
@@ -1114,7 +1143,7 @@ private extension DicomDIMSEServiceSCU {
                     try operationHandle?.checkCancellation(operation: operation)
                     let result = try body(transport)
                     try operationHandle?.checkCancellation(operation: operation)
-                    shouldRecycleAssociation = true
+                    shouldRecycleAssociation = operation.allowsAssociationRecycling
                     circuitBreaker?.recordSuccess()
                     recordAudit(operation: operation,
                                 outcome: .succeeded,
@@ -1132,6 +1161,14 @@ private extension DicomDIMSEServiceSCU {
                                 attempt: attempt,
                                 error: cancelled)
                     throw cancelled
+                }
+                if let printError = error as? DicomPrintManagementError,
+                   case .insufficientImageBoxes = printError {
+                    recordAudit(operation: operation,
+                                outcome: .failed,
+                                attempt: attempt,
+                                error: printError)
+                    throw printError
                 }
                 circuitBreaker?.recordFailure()
                 lastError = error
@@ -1491,6 +1528,13 @@ private extension DicomDIMSEServiceSCU {
         }
     }
 
+    func validateSuccessOrWarningStatus(_ command: DicomDIMSECommandSet) throws {
+        let status = command.status ?? 0
+        guard status == 0 || status & 0xF000 == 0xB000 else {
+            throw DicomNetworkError.dimseStatusFailure(status)
+        }
+    }
+
     func validateRetrieveStatus(_ command: DicomDIMSECommandSet) throws {
         let status = command.status ?? 0
         guard status == 0 || status & 0xFF00 == 0xB000 else {
@@ -1541,7 +1585,7 @@ private extension DicomDIMSEServiceSCU {
         progress?(.requestSent(operation: operation, messageID: messageID))
         let response = try readCommand(using: transport, reader: reader)
         try expect(response, commandField: responseCommandField)
-        try validateSuccessStatus(response)
+        try validateSuccessOrWarningStatus(response)
         return (operationResult(from: response),
                 try readOptionalDataSet(response: response,
                                         transferSyntax: transferSyntax,
@@ -1579,7 +1623,7 @@ private extension DicomDIMSEServiceSCU {
         progress?(.requestSent(operation: operation, messageID: messageID))
         let response = try readCommand(using: transport, reader: reader)
         try expect(response, commandField: DicomDIMSECommandField.nSetRSP)
-        try validateSuccessStatus(response)
+        try validateSuccessOrWarningStatus(response)
         return operationResult(from: response)
     }
 
@@ -1608,7 +1652,7 @@ private extension DicomDIMSEServiceSCU {
         progress?(.requestSent(operation: operation, messageID: messageID))
         let response = try readCommand(using: transport, reader: reader)
         try expect(response, commandField: DicomDIMSECommandField.nActionRSP)
-        try validateSuccessStatus(response)
+        try validateSuccessOrWarningStatus(response)
         return operationResult(from: response)
     }
 
@@ -1627,12 +1671,25 @@ private extension DicomDIMSEServiceSCU {
                                               transferSyntax: transferSyntax)
     }
 
-    func imageBoxUIDs(from dataSet: DicomDataSet?, expectedCount: Int) -> [String] {
+    /// The image box SOP Instance UIDs the printer created, taken from the film
+    /// box N-CREATE response.
+    ///
+    /// The printer may create *more* image boxes than the job fills — a layout
+    /// has as many slots as it has, and the extra ones simply stay empty. It may
+    /// also create *fewer*, which is its conformant answer to a film box asking
+    /// for more images than the layout holds. Fewer is not a programming error
+    /// and it is not this method's to paper over: an image box that was not
+    /// created has no SOP Instance UID, and an N-SET addressed to a UID the SCU
+    /// made up either fails opaquely or, on a lenient printer, prints a film
+    /// short of images with nothing saying which were dropped. Both counts are
+    /// thrown back to the caller, who decides whether to repaginate or stop.
+    func imageBoxUIDs(from dataSet: DicomDataSet?, expectedCount: Int) throws -> [String] {
         let referenced = dataSet?
             .sequenceItems(for: DicomPrintTag.referencedImageBoxSequence)
             .compactMap { $0.dataSet.string(for: .referencedSOPInstanceUID) } ?? []
         guard referenced.count >= expectedCount else {
-            return (0..<expectedCount).map { _ in DicomDataSetWriter.makeUID() }
+            throw DicomPrintManagementError.insufficientImageBoxes(requested: expectedCount,
+                                                                   granted: referenced.count)
         }
         return Array(referenced.prefix(expectedCount))
     }
@@ -1774,6 +1831,8 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
 
     private let connection: NWConnection
     private let queue = DispatchQueue(label: "DicomTCPAssociationTransport")
+    /// Only so a failure can say which peer it was talking to.
+    private let host: String
     private let timeout: TimeInterval
     private let maximumIncomingPDUSize: Int
     private let tlsContext: DicomAppliedTLSContext?
@@ -1805,6 +1864,7 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
         self.connection = NWConnection(host: NWEndpoint.Host(host),
                                        port: nwPort,
                                        using: prepared.parameters)
+        self.host = host
         self.timeout = timeout
         self.maximumIncomingPDUSize = Self.resolvedIncomingPDUSize(maximumIncomingPDUSize)
         self.tlsContext = prepared.tlsContext
@@ -1814,6 +1874,7 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
                 timeout: TimeInterval = 10,
                 maximumIncomingPDUSize: UInt32 = 16_384) {
         self.connection = acceptedConnection
+        self.host = acceptedConnection.endpoint.debugDescription
         self.timeout = timeout
         self.maximumIncomingPDUSize = Self.resolvedIncomingPDUSize(maximumIncomingPDUSize)
         self.tlsContext = nil
@@ -1826,6 +1887,7 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
         }
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<Void, Error>?
+        let host = self.host
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
@@ -1834,7 +1896,13 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
                 semaphore.signal()
             case .failed(let error):
                 self?.setIsOpen(false)
-                result = .failure(error)
+                result = .failure(Self.openFailure(from: error, host: host))
+                semaphore.signal()
+            case .waiting(let error):
+                guard Self.isTerminalOpenWaitingError(error) else { break }
+                self?.connection.cancel()
+                self?.setIsOpen(false)
+                result = .failure(Self.openFailure(from: error, host: host))
                 semaphore.signal()
             case .cancelled:
                 self?.setIsOpen(false)
@@ -1844,9 +1912,40 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
         }
         connection.start(queue: queue)
         guard semaphore.wait(timeout: .now() + timeout) == .success else {
+            connection.cancel()
+            setIsOpen(false)
             throw DicomNetworkError.networkTimeout("opening TCP connection")
         }
         try result?.get()
+    }
+
+    static func isTerminalOpenWaitingError(_ error: NWError) -> Bool {
+        switch error {
+        case .tls:
+            return true
+        case .posix(let code):
+            return code == .ECONNREFUSED
+        default:
+            return false
+        }
+    }
+
+    /// Gives a TLS failure a name the layers above can act on.
+    ///
+    /// A bare `NWError` is opaque to every `switch` that follows: the callers'
+    /// mappers key off `DicomNetworkError`, and anything else becomes a generic
+    /// connection failure. `.tlsTrustEvaluationFailed` is a case they already
+    /// translate into the app's own TLS error, which is how a refused
+    /// certificate can be reported as a certificate problem rather than as a
+    /// network one.
+    ///
+    /// Everything else keeps its own error: a POSIX refusal already reads as a
+    /// refusal, and inventing a wrapper for it would only hide it.
+    private static func openFailure(from error: NWError, host: String) -> Error {
+        guard case .tls(let status) = error else { return error }
+        return DicomNetworkError.tlsTrustEvaluationFailed(
+            "TLS handshake with \(host) failed (status \(status))."
+        )
     }
 
     public func startAcceptedConnection() {
@@ -1866,8 +1965,9 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
     public func writePDU(_ data: Data) throws {
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<Void, Error>?
-        connection.send(content: data, completion: .contentProcessed { error in
+        connection.send(content: data, completion: .contentProcessed { [weak self] error in
             if let error {
+                self?.setIsOpen(false)
                 result = .failure(error)
             } else {
                 result = .success(())
@@ -1960,13 +2060,17 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<Data, Error>?
         connection.receive(minimumIncompleteLength: minimumIncompleteLength,
-                           maximumLength: maximumLength) { content, _, isComplete, error in
+                           maximumLength: maximumLength) { [weak self] content, _, isComplete, error in
+            if isComplete || error != nil {
+                // The peer half-closed or the connection faulted. Record it even when this callback
+                // still carries payload — a PACS routinely sends the final response and its FIN
+                // together, and without this the association looks alive and gets recycled dead.
+                self?.setIsOpen(false)
+            }
             if let error {
                 result = .failure(error)
             } else if let content, !content.isEmpty {
                 result = .success(content)
-            } else if isComplete {
-                result = .success(Data())
             } else {
                 result = .success(Data())
             }

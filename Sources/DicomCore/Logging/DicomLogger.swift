@@ -1,8 +1,8 @@
 //
 //  DicomLogger.swift
 //
-//  Concrete implementation of LoggerProtocol using OSLog on iOS 14+/macOS 11+
-//  and NSLog fallback for iOS 13/macOS 12.
+//  Concrete implementation of LoggerProtocol using OSLog when the module is
+//  available and an NSLog fallback on other platforms.
 //
 //  Thread Safety: All methods are thread-safe. OSLog and NSLog both handle
 //  concurrent access internally without requiring external synchronization.
@@ -13,15 +13,14 @@ import Foundation
 import OSLog
 #endif
 
-/// Concrete logger implementation using OSLog when available (iOS 14+, macOS 11+)
-/// and falling back to NSLog for older platforms.
+/// Concrete logger implementation using OSLog when the module is available
+/// and falling back to NSLog on other platforms.
 ///
 /// **Thread Safety:** All logging methods are thread-safe. Both OSLog and NSLog
 /// handle concurrent access internally without data races.
 ///
-/// **Platform Compatibility:** Automatically selects the best logging backend:
-/// - iOS 14+ / macOS 11+: Uses OSLog with structured logging
-/// - iOS 13 / macOS 12: Falls back to NSLog
+/// **Platform Compatibility:** Uses OSLog with structured logging when the
+/// module is available and NSLog otherwise.
 ///
 /// **Usage:**
 /// ```swift
@@ -55,7 +54,7 @@ public struct DicomLogger: LoggerProtocol {
 
     // MARK: - Factory Method
 
-    /// Creates a logger instance with OSLog (when available) or NSLog fallback.
+    /// Creates a logger instance with OSLog or an NSLog fallback when the module is unavailable.
     ///
     /// - Parameters:
     ///   - subsystem: The subsystem identifier (typically reverse DNS, e.g., "com.example.dicom")
@@ -63,24 +62,22 @@ public struct DicomLogger: LoggerProtocol {
     /// - Returns: A configured logger instance conforming to LoggerProtocol
     public static func make(subsystem: String, category: String) -> LoggerProtocol {
         #if canImport(OSLog)
-        if #available(iOS 14.0, macOS 11.0, *) {
-            let logger = Logger(subsystem: subsystem, category: category)
-            return DicomLogger(
-                debug: { logger.debug("\($0, privacy: .public)") },
-                info: { logger.info("\($0, privacy: .public)") },
-                warning: { logger.warning("\($0, privacy: .public)") },
-                error: { logger.error("\($0, privacy: .public)") }
-            )
-        }
-        #endif
-
-        // Fallback for iOS 13 / macOS 12
+        let logger = Logger(subsystem: subsystem, category: category)
+        return DicomLogger(
+            debug: { logger.debug("\($0, privacy: .public)") },
+            info: { logger.info("\($0, privacy: .public)") },
+            warning: { logger.warning("\($0, privacy: .public)") },
+            error: { logger.error("\($0, privacy: .public)") }
+        )
+        #else
+        // Fallback for platforms without OSLog.
         return DicomLogger(
             debug: { NSLog("[DEBUG] %@", $0) },
             info: { NSLog("[INFO] %@", $0) },
             warning: { NSLog("[WARN] %@", $0) },
             error: { NSLog("[ERROR] %@", $0) }
         )
+        #endif
     }
 
     // MARK: - LoggerProtocol Implementation

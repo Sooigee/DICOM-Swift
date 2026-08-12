@@ -103,6 +103,7 @@ def oracle_version(oracle_id, oracle_by_id, preflight_by_id):
             "repository-builders",
             "malformed-generators",
             "metadata-parser",
+            "viewer-core",
         ):
             return "workspace HEAD"
         return "not-declared"

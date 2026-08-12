@@ -44,6 +44,12 @@ public enum DicomPrintManagementError: Error, Equatable, LocalizedError, Sendabl
     case invalidImagePosition(Int)
     case unsupportedSnapshotData
     case unsupportedService(String)
+    /// The printer created fewer Basic Grayscale Image Boxes than the film box
+    /// asked for — the conformant answer to a film box holding more images than
+    /// its layout has slots. The image boxes that were not granted have no SOP
+    /// Instance UID, so there is nothing to N-SET them onto; the job is
+    /// reported with both counts instead of being sent to invented UIDs.
+    case insufficientImageBoxes(requested: Int, granted: Int)
 
     public var errorDescription: String? {
         switch self {
@@ -55,6 +61,9 @@ public enum DicomPrintManagementError: Error, Equatable, LocalizedError, Sendabl
             return "Snapshot data could not be decoded into an RGB bitmap."
         case .unsupportedService(let service):
             return "Unsupported DICOM print management service: \(service)."
+        case .insufficientImageBoxes(let requested, let granted):
+            return "The printer granted \(granted) image box(es) for a film box that requested "
+                + "\(requested). Nothing was printed: the missing image boxes do not exist on the printer."
         }
     }
 }

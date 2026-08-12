@@ -195,7 +195,6 @@ public protocol DicomSeriesLoaderProtocol: AnyObject {
     ///     }
     /// }
     /// ```
-    @available(macOS 10.15, iOS 13.0, *)
     func loadSeriesWithProgress(in directory: URL) -> AsyncThrowingStream<SeriesLoadProgress, Error>
 }
 

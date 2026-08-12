@@ -43,12 +43,7 @@ extension DCMDecoder {
                     defer { try? handle.close() }
                     do {
                         try handle.seek(toOffset: 128)
-                        let bytes: Data
-                        if #available(iOS 13.4, macOS 10.15.4, *) {
-                            bytes = try handle.read(upToCount: 4) ?? Data()
-                        } else {
-                            bytes = handle.readData(ofLength: 4)
-                        }
+                        let bytes = try handle.read(upToCount: 4) ?? Data()
                         if bytes.count == 4 && bytes != Data([0x44, 0x49, 0x43, 0x4D]) {
                             warnings.append("Missing DICM signature at offset 128 (preamble optional)")
                         } else if bytes.count < 4 {

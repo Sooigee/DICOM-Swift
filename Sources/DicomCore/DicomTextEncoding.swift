@@ -34,6 +34,18 @@ public struct DicomSpecificCharacterSet: Equatable, Hashable, Sendable {
         return normalize(String(decoding: data, as: UTF8.self))
     }
 
+    /// Decodes a text VR whose whitespace is part of the value. The caller is
+    /// responsible for removing the single DICOM padding byte, if present.
+    internal func decodePreservingWhitespace(_ data: Data) -> String {
+        guard !data.isEmpty else { return "" }
+        for encoding in decodingCandidates {
+            if let value = String(data: data, encoding: encoding) {
+                return value.precomposedStringWithCanonicalMapping
+            }
+        }
+        return String(decoding: data, as: UTF8.self).precomposedStringWithCanonicalMapping
+    }
+
     internal func encode(_ value: String) -> Data {
         value.data(using: primaryEncoding) ?? Data(value.utf8)
     }

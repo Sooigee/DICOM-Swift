@@ -200,7 +200,6 @@ final class DicomSeriesLoaderPerformanceTests: XCTestCase {
         XCTAssertTrue(true, "Memory management verification completed")
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testMemoryScaling() async throws {
         let testSizes = [10, 20, 40]
 

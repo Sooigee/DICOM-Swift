@@ -5,7 +5,6 @@ final class DCMDecoderActorTests: XCTestCase {
 
     // MARK: - Actor Isolation Tests
 
-    @available(iOS 13.0, macOS 12.0, *)
     func testActorIsolation() async {
         // Test that decoder can be used inside an actor without warnings
         actor DecoderActor {
@@ -60,7 +59,6 @@ final class DCMDecoderActorTests: XCTestCase {
         XCTAssertNil(pixels.1, "8-bit pixels should be nil")
     }
 
-    @available(iOS 13.0, macOS 12.0, *)
     func testActorIsolationWithFileLoading() async {
         // Test that decoder can be injected and used inside an actor
         actor DicomLoaderActor {
@@ -106,7 +104,6 @@ final class DCMDecoderActorTests: XCTestCase {
         XCTAssertFalse(metadata.modality.isEmpty, "Modality should not be empty")
     }
 
-    @available(iOS 13.0, macOS 12.0, *)
     func testMultipleActorsWithDecoders() async {
         // Test that multiple actors can each have their own decoder instances
         actor DecoderActor {
@@ -149,7 +146,6 @@ final class DCMDecoderActorTests: XCTestCase {
         }
     }
 
-    @available(iOS 13.0, macOS 12.0, *)
     func testActorIsolationWithConcurrentAccess() async {
         // Test that an actor with a decoder can handle concurrent access from multiple tasks
         actor SharedDecoderActor {
@@ -227,7 +223,6 @@ final class DCMDecoderActorTests: XCTestCase {
         XCTAssertEqual(totalCount, 20, "All 20 operations should complete")
     }
 
-    @available(iOS 13.0, macOS 12.0, *)
     func testActorIsolationWithFileLoadingConcurrent() async throws {
         // Test multiple actors loading different files concurrently
         actor FileLoaderActor {

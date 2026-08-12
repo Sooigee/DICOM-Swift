@@ -427,6 +427,137 @@ final class DicomDIMSEServiceSCUTests: XCTestCase {
         XCTAssertEqual(imageDataSet?.int(for: .bitsAllocated), 8)
     }
 
+    func test_printManagementWithImageBoxWarning_propagatesAcceptedWarning() throws {
+        let transport = DIMSEScriptedTransport(
+            supportedAbstractSyntaxUIDs: [DicomNetworkUID.basicGrayscalePrintManagementMetaSOPClass],
+            nSetResponseStatus: 0xB604
+        )
+        let service = makeService()
+        let bitmap = try DicomRenderedBitmap(width: 1,
+                                             height: 1,
+                                             rgbData: Data([0x10, 0x20, 0x30]))
+        let job = try DicomPrintJob(renderedBitmap: bitmap,
+                                    template: .singleImage(label: "PRINT-WARNING"),
+                                    id: "print-warning")
+
+        let result = try service.sendPrintJob(job, using: transport)
+
+        XCTAssertEqual(result.operation.status, 0xB604)
+    }
+
+    func test_printManagementWithActionWarning_acceptsWarning() throws {
+        let transport = DIMSEScriptedTransport(
+            supportedAbstractSyntaxUIDs: [DicomNetworkUID.basicGrayscalePrintManagementMetaSOPClass],
+            nActionResponseStatus: 0xB600
+        )
+        let service = makeService()
+        let bitmap = try DicomRenderedBitmap(width: 1,
+                                             height: 1,
+                                             rgbData: Data([0x10, 0x20, 0x30]))
+        let job = try DicomPrintJob(renderedBitmap: bitmap,
+                                    template: .singleImage(label: "PRINT-WARNING"),
+                                    id: "print-warning")
+
+        let result = try service.sendPrintJob(job, using: transport)
+
+        XCTAssertEqual(result.operation.status, 0xB600)
+    }
+
+    func test_printManagementWithCreateWarnings_propagatesAcceptedWarning() throws {
+        let transport = DIMSEScriptedTransport(
+            supportedAbstractSyntaxUIDs: [DicomNetworkUID.basicGrayscalePrintManagementMetaSOPClass],
+            nCreateResponseStatus: 0xB605
+        )
+        let service = makeService()
+        let bitmap = try DicomRenderedBitmap(width: 1,
+                                             height: 1,
+                                             rgbData: Data([0x10, 0x20, 0x30]))
+        let job = try DicomPrintJob(renderedBitmap: bitmap,
+                                    template: .singleImage(label: "PRINT-WARNING"),
+                                    id: "print-warning")
+
+        let result = try service.sendPrintJob(job, using: transport)
+
+        XCTAssertEqual(result.operation.status, 0xB605)
+    }
+
+    /// A printer answering a film box with fewer Referenced Image Box items than
+    /// the job declared is conformant, not broken. The SCU used to invent one
+    /// UID per missing box, so the N-SETs that followed addressed SOP instances
+    /// the printer never created — silently. It must report both counts instead,
+    /// and send nothing.
+    func testPrintManagementReportsFewerImageBoxesThanRequestedWithoutSendingAnyImage() throws {
+        let transport = DIMSEScriptedTransport(
+            supportedAbstractSyntaxUIDs: [DicomNetworkUID.basicGrayscalePrintManagementMetaSOPClass],
+            grantedImageBoxCount: 1
+        )
+        let service = makeService()
+        let bitmap = try DicomRenderedBitmap(width: 1,
+                                             height: 1,
+                                             rgbData: Data([0x10, 0x20, 0x30]))
+        let job = try DicomPrintJob(
+            filmSession: DicomFilmSession(label: "PRINT-OVERFULL"),
+            filmBox: DicomFilmBox(imageDisplayFormat: "STANDARD\\1,1"),
+            imageBoxes: [
+                try DicomImageBox(position: 1, bitmap: bitmap),
+                try DicomImageBox(position: 2, bitmap: bitmap),
+                try DicomImageBox(position: 3, bitmap: bitmap)
+            ]
+        )
+
+        XCTAssertThrowsError(try service.sendPrintJob(job, using: transport)) { error in
+            XCTAssertEqual(error as? DicomPrintManagementError,
+                           .insufficientImageBoxes(requested: 3, granted: 1))
+        }
+
+        // The film session and film box were created; no image was set and no
+        // film was printed.
+        XCTAssertEqual(transport.writtenCommands.map(\.commandField), [
+            DicomDIMSECommandField.nCreateRQ,
+            DicomDIMSECommandField.nCreateRQ
+        ])
+        XCTAssertEqual(transport.releaseRequestCount, 1)
+    }
+
+    func test_printManagementWithInsufficientImageBoxes_doesNotRetry() throws {
+        var transports: [DIMSEScriptedTransport] = []
+        let service = DicomDIMSEServiceSCU(
+            configuration: makeConfiguration(retryPolicy: DicomNetworkRetryPolicy(maxAttempts: 3)),
+            transportFactory: {
+                let transport = DIMSEScriptedTransport(
+                    supportedAbstractSyntaxUIDs: [
+                        DicomNetworkUID.basicGrayscalePrintManagementMetaSOPClass
+                    ],
+                    grantedImageBoxCount: 1
+                )
+                transports.append(transport)
+                return transport
+            }
+        )
+        let bitmap = try DicomRenderedBitmap(width: 1,
+                                             height: 1,
+                                             rgbData: Data([0x10, 0x20, 0x30]))
+        let job = try DicomPrintJob(
+            filmSession: DicomFilmSession(label: "PRINT-OVERFULL"),
+            filmBox: DicomFilmBox(imageDisplayFormat: "STANDARD\\1,1"),
+            imageBoxes: [
+                try DicomImageBox(position: 1, bitmap: bitmap),
+                try DicomImageBox(position: 2, bitmap: bitmap)
+            ]
+        )
+
+        XCTAssertThrowsError(try service.sendPrintJob(job)) { error in
+            XCTAssertEqual(error as? DicomPrintManagementError,
+                           .insufficientImageBoxes(requested: 2, granted: 1))
+        }
+
+        XCTAssertEqual(transports.count, 1)
+        XCTAssertEqual(transports[0].writtenCommands.map(\.commandField), [
+            DicomDIMSECommandField.nCreateRQ,
+            DicomDIMSECommandField.nCreateRQ
+        ])
+    }
+
     func testStoreSCUSendsDataSetAndReportsSuccess() throws {
         let storageUID = DicomDataSetWriter.defaultSecondaryCaptureImageStorageSOPClassUID
         let transport = DIMSEScriptedTransport(supportedAbstractSyntaxUIDs: [storageUID])
@@ -854,7 +985,7 @@ final class DicomDIMSEServiceSCUTests: XCTestCase {
             mode: .enabled,
             serverName: "archive.example",
             material: material,
-            securityProfile: .bcp195
+            securityProfile: .bcp195RFC8996
         )
         let scu = DicomDIMSEServiceSCU(configuration: makeConfiguration(tls: tls))
         let scp = DicomStorageSCPConfiguration(aeTitle: "VIEWER", tls: tls)
@@ -875,7 +1006,7 @@ final class DicomDIMSEServiceSCUTests: XCTestCase {
                 privateKeyPath: fixture.serverPrivateKeyPath,
                 trustStorePath: fixture.caCertificatePath
             ),
-            securityProfile: .bcp195
+            securityProfile: .bcp195RFC8996
         )
 
         let prepared = try DicomTLSOptionsFactory.preparedParameters(for: tls, role: .client)
@@ -884,12 +1015,52 @@ final class DicomDIMSEServiceSCUTests: XCTestCase {
         XCTAssertEqual(prepared.tlsContext?.serverName, "localhost")
         XCTAssertEqual(prepared.tlsContext?.hasLocalIdentity, true)
         XCTAssertEqual(prepared.tlsContext?.trustedCertificateCount, 1)
-        XCTAssertEqual(prepared.tlsContext?.securityProfile, .bcp195)
+        XCTAssertEqual(prepared.tlsContext?.securityProfile, .bcp195RFC8996)
         XCTAssertEqual(prepared.tlsContext?.minimumProtocolVersionName, "TLSv1.2")
         XCTAssertEqual(prepared.tlsContext?.peerAuthenticationRequired, true)
         #else
         throw skipNetworkSecurityTLS("Network/Security TLS options are unavailable on this platform.")
         #endif
+    }
+
+    func testTLSOptionsApplyIdentityFromPrivateKeyData() throws {
+        #if canImport(Network) && canImport(Security) && os(macOS)
+        let fixture = try DicomTLSTestMaterial.write()
+        defer { fixture.remove() }
+        let privateKeyData = try Data(contentsOf: URL(fileURLWithPath: fixture.serverPrivateKeyPath))
+        let tls = DicomTLSConfiguration(
+            mode: .enabled,
+            material: DicomTLSMaterial(
+                certificatePath: fixture.serverCertificatePath,
+                privateKeyData: privateKeyData
+            )
+        )
+
+        let prepared = try DicomTLSOptionsFactory.preparedParameters(for: tls, role: .server)
+
+        XCTAssertEqual(prepared.tlsContext?.hasLocalIdentity, true)
+        #else
+        throw skipNetworkSecurityTLS("Network/Security TLS identity tests run only on macOS.")
+        #endif
+    }
+
+    func testTLSMaterialCodableDoesNotPersistPrivateKeyData() throws {
+        let privateKeyData = Data("private-key-secret".utf8)
+        let material = DicomTLSMaterial(
+            certificatePath: "/tmp/certificate.pem",
+            privateKeyData: privateKeyData,
+            trustStorePath: "/tmp/trust.pem"
+        )
+
+        let encoded = try JSONEncoder().encode(material)
+        let encodedText = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        let decoded = try JSONDecoder().decode(DicomTLSMaterial.self, from: encoded)
+
+        XCTAssertFalse(encodedText.contains("privateKeyData"))
+        XCTAssertFalse(encodedText.contains(privateKeyData.base64EncodedString()))
+        XCTAssertNil(decoded.privateKeyData)
+        XCTAssertEqual(decoded.certificatePath, material.certificatePath)
+        XCTAssertEqual(decoded.trustStorePath, material.trustStorePath)
     }
 
     func testTLSOptionsRejectMissingCertificate() throws {
@@ -953,25 +1124,57 @@ final class DicomDIMSEServiceSCUTests: XCTestCase {
         #endif
     }
 
-    func testTemporaryKeychainCleansUpDirectoryWhenUnlockFails() throws {
-        #if canImport(Security) && os(macOS)
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("DicomTemporaryKeychainTests-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+    func testTLSOptionsKeepIdentityMaterialInMemory() throws {
+        #if canImport(Network) && canImport(Security) && os(macOS)
+        let fixture = try DicomTLSTestMaterial.write()
+        defer { fixture.remove() }
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+        let existingDirectories = try Set(FileManager.default.contentsOfDirectory(
+            at: temporaryDirectory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix("DicomDecoderTLS-") })
+        let tls = DicomTLSConfiguration(
+            mode: .enabled,
+            material: DicomTLSMaterial(
+                certificatePath: fixture.serverCertificatePath,
+                privateKeyPath: fixture.serverPrivateKeyPath
+            )
+        )
 
-        XCTAssertThrowsError(try DicomTemporaryKeychain(
-            fileManager: .default,
-            directory: directory,
-            unlockKeychain: { _, _, _, _ in errSecAuthFailed }
-        )) { error in
+        let prepared = try DicomTLSOptionsFactory.preparedParameters(for: tls, role: .server)
+
+        try withExtendedLifetime(prepared) {
+            let currentDirectories = try Set(FileManager.default.contentsOfDirectory(
+                at: temporaryDirectory,
+                includingPropertiesForKeys: nil
+            ).filter { $0.lastPathComponent.hasPrefix("DicomDecoderTLS-") })
+            XCTAssertEqual(currentDirectories, existingDirectories)
+        }
+        #else
+        throw skipNetworkSecurityTLS("In-memory TLS identity tests run only on macOS Security.")
+        #endif
+    }
+
+    func testTLSOptionsRejectMismatchedCertificateAndPrivateKey() throws {
+        #if canImport(Network) && canImport(Security) && os(macOS)
+        let fixture = try DicomTLSTestMaterial.write()
+        defer { fixture.remove() }
+        let tls = DicomTLSConfiguration(
+            mode: .enabled,
+            material: DicomTLSMaterial(
+                certificatePath: fixture.wrongCACertificatePath,
+                privateKeyPath: fixture.serverPrivateKeyPath
+            )
+        )
+
+        XCTAssertThrowsError(try DicomTLSOptionsFactory.preparedParameters(for: tls, role: .server)) { error in
             guard case DicomNetworkError.tlsConfigurationInvalid(let reason) = error else {
                 return XCTFail("Expected TLS configuration error, got \(error)")
             }
-            XCTAssertTrue(reason.contains("unlock"))
+            XCTAssertTrue(reason.contains("does not match"))
         }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
         #else
-        throw skipNetworkSecurityTLS("Temporary keychain cleanup runs only on macOS Security.")
+        throw skipNetworkSecurityTLS("TLS identity matching tests run only on macOS Security.")
         #endif
     }
 
@@ -986,13 +1189,13 @@ final class DicomDIMSEServiceSCUTests: XCTestCase {
                     certificatePath: fixture.serverCertificatePath,
                     privateKeyPath: fixture.serverPrivateKeyPath
                 ),
-                securityProfile: .bcp195
+                securityProfile: .bcp195RFC8996
             ),
             clientTLS: DicomTLSConfiguration(
                 mode: .enabled,
                 serverName: "localhost",
                 material: DicomTLSMaterial(trustStorePath: fixture.caCertificatePath),
-                securityProfile: .bcp195
+                securityProfile: .bcp195RFC8996
             )
         )
 
@@ -1013,13 +1216,13 @@ final class DicomDIMSEServiceSCUTests: XCTestCase {
                     certificatePath: fixture.serverCertificatePath,
                     privateKeyPath: fixture.serverPrivateKeyPath
                 ),
-                securityProfile: .bcp195
+                securityProfile: .bcp195RFC8996
             ),
             clientTLS: DicomTLSConfiguration(
                 mode: .enabled,
                 serverName: "localhost",
                 material: DicomTLSMaterial(trustStorePath: fixture.wrongCACertificatePath),
-                securityProfile: .bcp195
+                securityProfile: .bcp195RFC8996
             )
         )
 
@@ -1182,6 +1385,49 @@ final class DicomDIMSEServiceSCUTests: XCTestCase {
         ])
     }
 
+    func test_getRetrieve_whenQueuedTwice_opensFreshAssociation() throws {
+        let configuration = makeConfiguration()
+        let poolLog = DicomInMemoryAssociationPoolLog()
+        let factory = ScriptedTransportFactory(supportedAbstractSyntaxUIDs: [
+            DicomNetworkUID.studyRootQueryRetrieveGet,
+            DicomDataSetWriter.defaultSecondaryCaptureImageStorageSOPClassUID
+        ])
+        let pool = DicomDIMSEAssociationPool(policy: DicomDIMSEAssociationPoolPolicy(
+            maximumIdleServicesPerKey: 2,
+            idleTimeout: 60
+        ), logger: poolLog, transportFactory: factory.makeTransport)
+
+        _ = try pool.service(for: configuration).get(identifier: retrieveIdentifier())
+        _ = try pool.service(for: configuration).get(identifier: retrieveIdentifier())
+
+        XCTAssertEqual(factory.transports.count, 2)
+        XCTAssertEqual(pool.idleCount(for: configuration), 0)
+        XCTAssertFalse(poolLog.events.contains { $0.kind == .recycled })
+        XCTAssertFalse(poolLog.events.contains { $0.kind == .reused })
+    }
+
+    func test_moveRetrieve_whenQueuedTwice_opensFreshAssociation() throws {
+        let configuration = makeConfiguration()
+        let poolLog = DicomInMemoryAssociationPoolLog()
+        let factory = ScriptedTransportFactory(supportedAbstractSyntaxUIDs: [
+            DicomNetworkUID.studyRootQueryRetrieveMove
+        ])
+        let pool = DicomDIMSEAssociationPool(policy: DicomDIMSEAssociationPoolPolicy(
+            maximumIdleServicesPerKey: 2,
+            idleTimeout: 60
+        ), logger: poolLog, transportFactory: factory.makeTransport)
+
+        _ = try pool.service(for: configuration).move(identifier: retrieveIdentifier(),
+                                                      moveDestinationAETitle: "ISIS")
+        _ = try pool.service(for: configuration).move(identifier: retrieveIdentifier(),
+                                                      moveDestinationAETitle: "ISIS")
+
+        XCTAssertEqual(factory.transports.count, 2)
+        XCTAssertEqual(pool.idleCount(for: configuration), 0)
+        XCTAssertFalse(poolLog.events.contains { $0.kind == .recycled })
+        XCTAssertFalse(poolLog.events.contains { $0.kind == .reused })
+    }
+
     func testAssociationPoolKeySeparatesNodeTLSIdentityAndDIMSEConfiguration() throws {
         let tls = DicomTLSConfiguration(
             mode: .enabled,
@@ -1192,7 +1438,7 @@ final class DicomDIMSEServiceSCUTests: XCTestCase {
                 trustStorePath: "/tmp/trust.pem",
                 trustedCertificatePaths: ["/tmp/root.pem"]
             ),
-            securityProfile: .bcp195
+            securityProfile: .bcp195RFC8996
         )
         let identity = DicomUserIdentity.usernameAndPasscode("operator", passcode: "secret-passcode")
         let base = makeConfiguration(
@@ -1327,6 +1573,189 @@ final class DicomDIMSEServiceSCUTests: XCTestCase {
 
         XCTAssertEqual(poolLog.events.filter { $0.kind == .created }.count, 1)
         XCTAssertEqual(poolLog.events.filter { $0.kind == .reused }.count, 1)
+        XCTAssertEqual(pool.idleCount(for: configuration), 1)
+    }
+
+    /// Two retrieves queued back to back against one node, which is what the import queue does the
+    /// instant a download finishes. Reusing the first retrieve's association leaves unread PDUs on
+    /// the wire, and the second retrieve dies on `malformedCommandSet`.
+    func test_liveHorosGetRetrieve_whenRunSequentially_doesNotReuseAssociation() throws {
+        guard ProcessInfo.processInfo.environment["DICOM_SWIFT_LIVE_HOROS"] == "1" else {
+            throw XCTSkip("Set DICOM_SWIFT_LIVE_HOROS=1 when HOROS is listening on 127.0.0.1:4007.")
+        }
+
+        let poolLog = DicomInMemoryAssociationPoolLog()
+        let pool = DicomDIMSEAssociationPool(logger: poolLog)
+        defer { pool.closeAll() }
+        let configuration = DicomDIMSEConnectionConfiguration(
+            host: "127.0.0.1",
+            port: 4007,
+            calledAETitle: "HOROS",
+            callingAETitle: "ISIS",
+            timeout: 15
+        )
+
+        let studyQuery = DicomDataSet(elements: [
+            element(0x0008_0052, .CS, "STUDY"),
+            element(DicomTag.studyInstanceUID.rawValue, .UI, "")
+        ])
+        let studies = try pool.service(for: configuration).find(identifier: studyQuery)
+        let studyUID = try XCTUnwrap(studies.matches.first?.string(for: .studyInstanceUID),
+                                     "HOROS has no studies to retrieve.")
+        let retrieve = DicomDataSet(elements: [
+            element(0x0008_0052, .CS, "STUDY"),
+            element(DicomTag.studyInstanceUID.rawValue, .UI, studyUID)
+        ])
+
+        let first = try pool.service(for: configuration).get(identifier: retrieve)
+        let second = try pool.service(for: configuration).get(identifier: retrieve)
+
+        XCTAssertGreaterThan(first.retrievedInstances.count, 0)
+        XCTAssertEqual(second.retrievedInstances.count, first.retrievedInstances.count)
+        XCTAssertEqual(second.operation.status, first.operation.status)
+        // One association for the C-FIND plus one per retrieve, and nothing ever handed back out:
+        // the C-FIND's idle entry stays in the pool, the two retrieve associations do not.
+        XCTAssertEqual(poolLog.events.filter { $0.kind == .created }.count, 3)
+        XCTAssertEqual(poolLog.events.filter { $0.kind == .reused }.count, 0)
+    }
+
+    // MARK: - Retrieve associations are never recycled (#1602)
+
+    /// Every assertion above about recycling needs HOROS on the wire, so none of it runs in a gate.
+    /// The four tests below are the hermetic twins: they hold the same line with scripted transports.
+
+    func test_recyclingPolicy_refusesRetrievesAndAllowsEveryOtherOperation() {
+        XCTAssertFalse(DicomDIMSEOperation.getRetrieve.allowsAssociationRecycling)
+        XCTAssertFalse(DicomDIMSEOperation.moveRetrieve.allowsAssociationRecycling)
+
+        for operation in [DicomDIMSEOperation.verification,
+                          .query,
+                          .modalityWorklist,
+                          .store,
+                          .mppsCreate,
+                          .mppsUpdate,
+                          .printManagement] {
+            XCTAssertTrue(operation.allowsAssociationRecycling,
+                          "\(operation.rawValue) should keep pooling its association.")
+        }
+    }
+
+    func test_pooledGetRetrieve_whenItSucceeds_isNotHandedBackToThePool() throws {
+        let poolLog = DicomInMemoryAssociationPoolLog()
+        let pool = DicomDIMSEAssociationPool(logger: poolLog)
+        defer { pool.closeAll() }
+        let configuration = makeConfiguration()
+        var transports: [DIMSEScriptedTransport] = []
+        let service = DicomDIMSEServiceSCU(
+            configuration: configuration,
+            transportFactory: {
+                let transport = DIMSEScriptedTransport(supportedAbstractSyntaxUIDs: [
+                    DicomNetworkUID.studyRootQueryRetrieveGet,
+                    DicomDataSetWriter.defaultSecondaryCaptureImageStorageSOPClassUID
+                ])
+                transports.append(transport)
+                return transport
+            },
+            associationPool: pool
+        )
+
+        let result = try service.get(identifier: retrieveIdentifier())
+
+        XCTAssertEqual(result.operation.status, 0)
+        XCTAssertEqual(pool.idleCount(for: configuration), 0)
+        XCTAssertTrue(poolLog.events.allSatisfy { $0.kind != .recycled })
+        XCTAssertEqual(transports.count, 1)
+        XCTAssertGreaterThanOrEqual(transports[0].closeCount, 1)
+    }
+
+    /// The #1602 symptom itself: a download queued behind another starts the instant the first one
+    /// finishes, well inside the pool's idle window. If the spent association came back out, the
+    /// second retrieve would read the first one's leftover PDUs.
+    func test_pooledGetRetrieve_whenQueuedBehindAnother_negotiatesItsOwnAssociation() throws {
+        let poolLog = DicomInMemoryAssociationPoolLog()
+        let pool = DicomDIMSEAssociationPool(logger: poolLog)
+        defer { pool.closeAll() }
+        let configuration = makeConfiguration()
+        var transports: [DIMSEScriptedTransport] = []
+        let makeService = {
+            DicomDIMSEServiceSCU(
+                configuration: configuration,
+                transportFactory: {
+                    let transport = DIMSEScriptedTransport(supportedAbstractSyntaxUIDs: [
+                        DicomNetworkUID.studyRootQueryRetrieveGet,
+                        DicomDataSetWriter.defaultSecondaryCaptureImageStorageSOPClassUID
+                    ])
+                    transports.append(transport)
+                    return transport
+                },
+                associationPool: pool
+            )
+        }
+
+        let first = try makeService().get(identifier: retrieveIdentifier())
+        let second = try makeService().get(identifier: retrieveIdentifier())
+
+        XCTAssertEqual(first.operation.status, 0)
+        XCTAssertEqual(second.operation.status, 0)
+        XCTAssertEqual(second.retrievedInstances.count, first.retrievedInstances.count)
+        XCTAssertEqual(transports.count, 2, "The queued retrieve reused a spent association.")
+        XCTAssertTrue(transports.allSatisfy { $0.associationRequests.count == 1 })
+        XCTAssertEqual(poolLog.events.filter { $0.kind == .created }.count, 2)
+        XCTAssertEqual(poolLog.events.filter { $0.kind == .reused }.count, 0)
+    }
+
+    func test_pooledMoveRetrieve_whenItSucceeds_isNotHandedBackToThePool() throws {
+        let pool = DicomDIMSEAssociationPool()
+        defer { pool.closeAll() }
+        let configuration = makeConfiguration()
+        let service = DicomDIMSEServiceSCU(
+            configuration: configuration,
+            transportFactory: {
+                DIMSEScriptedTransport(supportedAbstractSyntaxUIDs: [
+                    DicomNetworkUID.studyRootQueryRetrieveMove
+                ])
+            },
+            associationPool: pool
+        )
+
+        let result = try service.move(identifier: retrieveIdentifier(),
+                                      moveDestinationAETitle: "VIEWER")
+
+        XCTAssertEqual(result.status, 0)
+        XCTAssertEqual(pool.idleCount(for: configuration), 0)
+    }
+
+    /// The other half of the fix: refusing to recycle retrieves must not quietly disable pooling for
+    /// the operations where reuse is safe and worth having.
+    func test_pooledQueryAndVerification_whenTheySucceed_keepReusingOneAssociation() throws {
+        let poolLog = DicomInMemoryAssociationPoolLog()
+        let pool = DicomDIMSEAssociationPool(logger: poolLog)
+        defer { pool.closeAll() }
+        let configuration = makeConfiguration()
+        var transports: [DIMSEScriptedTransport] = []
+        let makeService = {
+            DicomDIMSEServiceSCU(
+                configuration: configuration,
+                transportFactory: {
+                    let transport = DIMSEScriptedTransport(supportedAbstractSyntaxUIDs: [
+                        DicomNetworkUID.verificationSOPClass,
+                        DicomNetworkUID.studyRootQueryRetrieveFind
+                    ])
+                    transports.append(transport)
+                    return transport
+                },
+                associationPool: pool
+            )
+        }
+
+        _ = try makeService().verify()
+        XCTAssertEqual(pool.idleCount(for: configuration), 1)
+        _ = try makeService().verify()
+
+        XCTAssertEqual(transports.count, 1, "A second C-ECHO opened a needless association.")
+        XCTAssertEqual(poolLog.events.filter { $0.kind == .created }.count, 1)
+        XCTAssertEqual(poolLog.events.filter { $0.kind == .reused }.count, 1)
+        XCTAssertEqual(poolLog.events.filter { $0.kind == .recycled }.count, 2)
         XCTAssertEqual(pool.idleCount(for: configuration), 1)
     }
 }
@@ -1479,20 +1908,23 @@ private func worklistDataSet() -> DicomDataSet {
     ])
 }
 
-private func printFilmBoxResponseDataSet() -> DicomDataSet {
+/// The film box N-CREATE response, carrying one Referenced Image Box item per
+/// image box the printer actually created. `grantedImageBoxCount` is how a
+/// printer says "your film box asked for more than this layout holds".
+private func printFilmBoxResponseDataSet(grantedImageBoxCount: Int = 1) -> DicomDataSet {
     DicomDataSet(elements: [
         DicomDataElement(tag: DicomPrintTag.referencedImageBoxSequence,
                          vr: .SQ,
-                         value: .sequence([
+                         value: .sequence((0..<max(0, grantedImageBoxCount)).map { index in
                             DicomSequenceItem(dataSet: DicomDataSet(elements: [
                                 element(DicomTag.referencedSOPClassUID.rawValue,
                                         .UI,
                                         DicomNetworkUID.basicGrayscaleImageBoxSOPClass),
                                 element(DicomTag.referencedSOPInstanceUID.rawValue,
                                         .UI,
-                                        "2.25.imagebox.1")
+                                        "2.25.imagebox.\(index + 1)")
                             ]))
-                         ]))
+                         }))
     ])
 }
 
@@ -1658,6 +2090,10 @@ private final class DIMSEScriptedTransport: DicomCancellableAssociationTransport
     private let retrieveFinalStatus: UInt16
     private let failBeforeRetrieveFinalResponse: Bool
     private let findResponseDataSet: DicomDataSet?
+    private let grantedImageBoxCount: Int
+    private let nCreateResponseStatus: UInt16
+    private let nSetResponseStatus: UInt16
+    private let nActionResponseStatus: UInt16
     private var responses: [Data] = []
     private var acceptedContextsByID: [UInt8: DicomAcceptedPresentationContext] = [:]
     private var lastRequestCommand: DicomDIMSECommandSet?
@@ -1682,7 +2118,11 @@ private final class DIMSEScriptedTransport: DicomCancellableAssociationTransport
         cancelBeforeReturningCommandFields: Set<UInt16> = [],
         retrieveFinalStatus: UInt16 = 0,
         failBeforeRetrieveFinalResponse: Bool = false,
-        findResponseDataSet: DicomDataSet? = nil
+        findResponseDataSet: DicomDataSet? = nil,
+        grantedImageBoxCount: Int = 1,
+        nCreateResponseStatus: UInt16 = 0,
+        nSetResponseStatus: UInt16 = 0,
+        nActionResponseStatus: UInt16 = 0
     ) {
         self.supportedAbstractSyntaxUIDs = supportedAbstractSyntaxUIDs
         self.preferredTransferSyntaxes = preferredTransferSyntaxes
@@ -1690,6 +2130,10 @@ private final class DIMSEScriptedTransport: DicomCancellableAssociationTransport
         self.retrieveFinalStatus = retrieveFinalStatus
         self.failBeforeRetrieveFinalResponse = failBeforeRetrieveFinalResponse
         self.findResponseDataSet = findResponseDataSet
+        self.grantedImageBoxCount = grantedImageBoxCount
+        self.nCreateResponseStatus = nCreateResponseStatus
+        self.nSetResponseStatus = nSetResponseStatus
+        self.nActionResponseStatus = nActionResponseStatus
     }
 
     func writePDU(_ data: Data) throws {
@@ -1802,7 +2246,7 @@ private final class DIMSEScriptedTransport: DicomCancellableAssociationTransport
                 commandField: DicomDIMSECommandField.nActionRSP,
                 messageIDBeingRespondedTo: command.messageID,
                 commandDataSetType: DicomDIMSECommandDataSetType.noDataSet,
-                status: 0,
+                status: nActionResponseStatus,
                 requestedSOPInstanceUID: command.requestedSOPInstanceUID,
                 actionTypeID: command.actionTypeID
             ), contextID: presentationContextID)
@@ -1899,11 +2343,14 @@ private final class DIMSEScriptedTransport: DicomCancellableAssociationTransport
                 commandDataSetType: hasFilmBoxDataSet
                     ? DicomDIMSECommandDataSetType.hasDataSet
                     : DicomDIMSECommandDataSetType.noDataSet,
-                status: 0,
+                status: nCreateResponseStatus,
                 affectedSOPInstanceUID: command.affectedSOPInstanceUID
             ), contextID: presentationContextID)
             if hasFilmBoxDataSet {
-                try enqueueDataSet(printFilmBoxResponseDataSet(), contextID: presentationContextID)
+                try enqueueDataSet(
+                    printFilmBoxResponseDataSet(grantedImageBoxCount: grantedImageBoxCount),
+                    contextID: presentationContextID
+                )
             }
         case DicomDIMSECommandField.nSetRQ:
             try enqueueCommand(DicomDIMSECommandSet(
@@ -1911,7 +2358,7 @@ private final class DIMSEScriptedTransport: DicomCancellableAssociationTransport
                 commandField: DicomDIMSECommandField.nSetRSP,
                 messageIDBeingRespondedTo: command.messageID,
                 commandDataSetType: DicomDIMSECommandDataSetType.noDataSet,
-                status: 0,
+                status: nSetResponseStatus,
                 requestedSOPInstanceUID: command.requestedSOPInstanceUID
             ), contextID: presentationContextID)
         default:

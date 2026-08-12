@@ -1,6 +1,5 @@
 import Foundation
 
-@available(macOS 10.15, iOS 13.0, *)
 extension DicomSeriesLoader {
     /// Loads multiple DICOM series directories concurrently with progress tracking.
     ///
@@ -249,7 +248,6 @@ extension DicomSeriesLoader {
 
 // MARK: - Private Batch Loading Helpers
 
-@available(macOS 10.15, iOS 13.0, *)
 private extension DicomSeriesLoader {
     /// Loads a single DICOM file, returning a result with either the decoder or an error.
     /// - Parameters:

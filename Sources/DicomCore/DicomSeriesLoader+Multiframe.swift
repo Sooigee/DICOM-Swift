@@ -39,7 +39,10 @@ extension DicomSeriesLoader {
     /// Functional Groups: Plane Position orders the frames along the
     /// normal, Plane Orientation must be consistent, Pixel Measures give
     /// the in-plane spacing, and Pixel Value Transformation supplies the
-    /// per-frame rescale (falling back to the top-level rescale tags).
+    /// per-frame rescale (falling back to the top-level rescale tags). Frame
+    /// VOI values remain associated with each spatially ordered slice. The
+    /// volume default is the first valid Frame VOI window in spatial order,
+    /// falling back to top-level Window Center/Width when none is available.
     public func loadEnhancedMultiframeVolume(at url: URL) throws -> DicomSeriesVolume {
         let anyDecoder = try decoderFactory(url.path)
         let format = enhancedPixelFormat(from: anyDecoder)
@@ -75,7 +78,11 @@ extension DicomSeriesLoader {
                                     + "\(format.numberOfFrames) declared frames.")
         }
 
-        let orderedFrames = groups.framesInSpatialOrder
+        let orderedFrames = try validatedSingleStackFrames(
+            groups,
+            format: format,
+            sopClassUID: sopClassUID
+        )
         var referenceOrientation: DicomPlaneOrientation?
         var positions = [Double]()
 
@@ -198,6 +205,9 @@ extension DicomSeriesLoader {
             simd_normalize(orientation.column),
             normal
         ))
+        let sliceVOIs = orderedFrames.map { $0.functionalGroups.frameVOI }
+        let frameDefaultWindow = sliceVOIs.compactMap { $0?.windows.first }.first
+        let topLevelWindow = windowCenterWidth(from: decoder)
 
         return DicomSeriesVolume(
             voxels: voxels,
@@ -215,10 +225,13 @@ extension DicomSeriesLoader {
             seriesDescription: decoder.info(for: .seriesDescription),
             studyDescription: nonEmptyValue(decoder.info(for: .studyDescription)),
             modality: decoder.info(for: .modality),
+            windowCenter: frameDefaultWindow?.center ?? topLevelWindow?.center,
+            windowWidth: frameDefaultWindow?.width ?? topLevelWindow?.width,
             studyInstanceUID: nonEmptyValue(decoder.info(for: .studyInstanceUID)),
             seriesInstanceUID: nonEmptyValue(decoder.info(for: .seriesInstanceUID)),
             frameOfReferenceUID: nonEmptyValue(decoder.info(for: .frameOfReferenceUID)),
-            sliceRescaleParameters: sliceRescale
+            sliceRescaleParameters: sliceRescale,
+            sliceVOIs: sliceVOIs
         )
     }
 
@@ -239,6 +252,92 @@ extension DicomSeriesLoader {
             transferSyntaxUID: transferSyntaxUID,
             isCompressed: DicomTransferSyntax(uid: transferSyntaxUID)?.isCompressed ?? false
         )
+    }
+
+    private func validatedSingleStackFrames(
+        _ groups: DicomEnhancedMultiframeFunctionalGroups,
+        format: DicomSeriesLoaderPixelFormat,
+        sopClassUID: String
+    ) throws -> [DicomEnhancedFrame] {
+        guard let organization = groups.dimensionOrganization else {
+            let hasUnresolvedDimensions = groups.frames.contains { frame in
+                guard let content = frame.functionalGroups.frameContent else { return false }
+                return nonEmptyValue(content.stackID ?? "") != nil
+                    || content.inStackPositionNumber != nil
+                    || !content.dimensionIndexValues.isEmpty
+            }
+            if hasUnresolvedDimensions {
+                throw enhancedError(
+                    format,
+                    sopClassUID: sopClassUID,
+                    reason: "frame dimensions are present without Dimension Organization definitions; "
+                        + "the frames remain available in 2D."
+                )
+            }
+            return groups.framesInSpatialOrder
+        }
+
+        let frameContentPointer = DicomTag.frameContentSequence.rawValue
+        guard organization.organizationUIDs.count == 1,
+              let organizationUID = nonEmptyValue(organization.organizationUIDs[0]),
+              organization.indexes.count == 2,
+              organization.indexes.allSatisfy({
+                  $0.organizationUID == organizationUID
+                      && $0.functionalGroupPointer == frameContentPointer
+              }),
+              let stackIndex = organization.indexes.firstIndex(where: {
+                  $0.dimensionIndexPointer == DicomTag.stackID.rawValue
+              }),
+              let positionIndex = organization.indexes.firstIndex(where: {
+                  $0.dimensionIndexPointer == DicomTag.inStackPositionNumber.rawValue
+              }),
+              stackIndex != positionIndex else {
+            throw enhancedError(
+                format,
+                sopClassUID: sopClassUID,
+                reason: "unsupported Dimension Index pattern; volume mode accepts only Stack ID plus "
+                    + "In-Stack Position Number. The frames remain available in 2D."
+            )
+        }
+
+        var logicalStacks = Set<String>()
+        var dimensionPositions = Set<String>()
+        for frame in groups.frames {
+            guard let content = frame.functionalGroups.frameContent,
+                  let stackID = nonEmptyValue(content.stackID ?? ""),
+                  let inStackPositionNumber = content.inStackPositionNumber,
+                  content.dimensionIndexValues.count == organization.indexes.count,
+                  content.dimensionIndexValues.allSatisfy({ $0 > 0 }),
+                  content.dimensionIndexValues[positionIndex] == inStackPositionNumber else {
+                throw enhancedError(
+                    format,
+                    sopClassUID: sopClassUID,
+                    reason: "a frame has incomplete Stack ID, In-Stack Position Number, or Dimension Index Values; "
+                        + "the frames remain available in 2D."
+                )
+            }
+            let stackKey = "\(content.dimensionIndexValues[stackIndex])|\(stackID)"
+            logicalStacks.insert(stackKey)
+            let positionKey = "\(stackKey)|\(content.dimensionIndexValues[positionIndex])"
+            guard dimensionPositions.insert(positionKey).inserted else {
+                throw enhancedError(
+                    format,
+                    sopClassUID: sopClassUID,
+                    reason: "the selected stack has duplicate Dimension Index positions; "
+                        + "the frames remain available in 2D."
+                )
+            }
+        }
+
+        guard logicalStacks.count == 1 else {
+            throw enhancedError(
+                format,
+                sopClassUID: sopClassUID,
+                reason: "multiple logical stacks are present; volume mode supports one stack only. "
+                    + "The frames remain available in 2D."
+            )
+        }
+        return groups.framesInSpatialOrder
     }
 
     private func enhancedError(

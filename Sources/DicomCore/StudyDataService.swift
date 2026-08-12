@@ -395,12 +395,7 @@ public final class StudyDataService: StudyDataServiceProtocol, @unchecked Sendab
                         let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: filePath))
                         defer { try? handle.close() }
                         try handle.seek(toOffset: 128)
-                        let dicmBytes: Data
-                        if #available(iOS 13.4, macOS 10.15.4, *) {
-                            dicmBytes = try handle.read(upToCount: 4) ?? Data()
-                        } else {
-                            dicmBytes = handle.readData(ofLength: 4)
-                        }
+                        let dicmBytes = try handle.read(upToCount: 4) ?? Data()
                         if dicmBytes != Data([0x44, 0x49, 0x43, 0x4D]) { // "DICM"
                             issues.append("Missing DICOM header signature")
                         }
@@ -616,7 +611,8 @@ public final class StudyDataService: StudyDataServiceProtocol, @unchecked Sendab
     /// ## Example
     /// ```swift
     /// if let thumbData = await service.extractThumbnail(from: filePath, maxSize: CGSize(width: 200, height: 200)) {
-    ///     try thumbData.write(to: outputURL)
+    ///     let image = UIImage(data: thumbData)
+    ///     imageView.image = image
     /// }
     /// ```
     ///

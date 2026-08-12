@@ -73,7 +73,8 @@
     {"id":"negative.malformed-marker-box-bin","status":"covered","caseIDs":["codec-negative-security"],"owner":"DICOM-Swift QA"},
     {"id":"negative.decompression-bomb-dimensions","status":"covered","caseIDs":["codec-negative-security"],"owner":"DICOM-Swift QA"},
     {"id":"negative.integer-overflow-boundary","status":"covered","caseIDs":["codec-negative-security"],"owner":"DICOM-Swift QA"},
-    {"id":"negative.unsupported-component-precision-color","status":"covered","caseIDs":["native-extended-negative","codec-negative-security"],"owner":"DICOM-Swift QA"}
+    {"id":"negative.unsupported-component-precision-color","status":"covered","caseIDs":["native-extended-negative","codec-negative-security"],"owner":"DICOM-Swift QA"},
+    {"id":"negative.corrupt-derived-artifact","status":"covered","caseIDs":["optimized-artifact-negative"],"owner":"Isis ViewerCore QA"}
   ],
   "fixtures": [
     {
@@ -291,7 +292,8 @@
     {"id":"non-pixel-object-roundtrip","fixtureIDs":[],"encoderID":"dicomswift","decoderID":"dicomswift","backendID":"non-pixel-object-builders","comparison":"metadata-and-payload-exact","testIdentifier":"DicomEncapsulatedDocumentTests|DicomWaveformTests|DicomVideoTests","testPath":"Tests/DicomCoreTests/DicomEncapsulatedDocumentTests.swift","requiredGates":["fixture","release"],"expectedResult":"passed","supportVerdict":"qualified"},
     {"id":"dicomswift-object-export","fixtureIDs":["seg-binary","rtstruct-contour","rtdose-grid","gsps-annotation","sr-tid1500","kos"],"encoderID":"dicomswift","decoderID":"dicomkit","backendID":"clinical-object-builders","comparison":"dicomkit-level1-and-tag-exact","testIdentifier":"ClinicalInteropFixtureExportTests","testPath":"Tests/DicomCoreTests/ClinicalInteropFixtureExportTests.swift","requiredGates":["nightly"],"expectedResult":"passed","supportVerdict":"experimental"},
     {"id":"dicomkit-synthetic-read","fixtureIDs":[],"encoderID":"dicomkit","decoderID":"dicomswift","backendID":"legacy-frame-decoders","comparison":"metadata-and-pixel-exact","testIdentifier":"dicomkit-synthetic-read","testPath":"Scripts/conformance/run_dicomkit_interop.sh","requiredGates":["nightly"],"expectedResult":"passed","supportVerdict":"experimental"},
-    {"id":"dicomkit-cross-write","fixtureIDs":[],"encoderID":"dicomkit","decoderID":"dicomswift","backendID":"legacy-frame-decoders","comparison":"encapsulation-metadata-and-pixel-exact","testIdentifier":"dicomkit-cross-write","testPath":"Scripts/conformance/run_dicomkit_interop.sh","requiredGates":["nightly"],"expectedResult":"passed","supportVerdict":"experimental"}
+    {"id":"dicomkit-cross-write","fixtureIDs":[],"encoderID":"dicomkit","decoderID":"dicomswift","backendID":"legacy-frame-decoders","comparison":"encapsulation-metadata-and-pixel-exact","testIdentifier":"dicomkit-cross-write","testPath":"Scripts/conformance/run_dicomkit_interop.sh","requiredGates":["nightly"],"expectedResult":"passed","supportVerdict":"experimental"},
+    {"id":"optimized-artifact-negative","fixtureIDs":[],"encoderID":"viewer-core","decoderID":"viewer-core","backendID":"optimized-volume-artifact","comparison":"digest-schema-and-fingerprint-fail-closed","testIdentifier":"OptimizedVolumeArtifactStoreTests","testPath":"../Packages/Tests/ViewerCoreTests/OptimizedVolumeArtifactStoreTests.swift","requiredGates":["isis-release"],"expectedResult":"passed","supportVerdict":"qualified"}
   ],
   "commands": {
     "fixture": "Scripts/test_gates.sh fixture",

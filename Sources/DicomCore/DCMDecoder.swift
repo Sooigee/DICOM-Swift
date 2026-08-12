@@ -244,11 +244,25 @@ public final class DCMDecoder: DicomDecoderProtocol, @unchecked Sendable {
     /// Protects against memory bombs from unrealistic image dimensions.
     static let maxPixelBufferSize: Int64 = 2 * 1024 * 1024 * 1024
 
+    /// Tag-name lookup table and logger, shared across decoders.
+    ///
+    /// Both used to be constructed per instance. A decoder is created per file,
+    /// so opening one 291-slice series allocated ~291 dictionaries (each with its
+    /// own logger) plus ~291 decoder loggers, and emitted a DEBUG log line per
+    /// dictionary — several hundred lines that drowned out the rest of the open.
+    /// The plist behind ``DCMDictionary`` is already process-wide static and the
+    /// table is immutable, so one instance serves every decoder.
+    private static let sharedDictionary = DCMDictionary()
+    private static let sharedLogger: LoggerProtocol = DicomLogger.make(
+        subsystem: "com.dicomviewer",
+        category: "DCMDecoder"
+    )
+
     /// Dictionary used to translate tags to human readable names.  The
     /// original code stored a strong pointer to ``DCMDictionary``.
-    let dict = DCMDictionary()
+    let dict: DCMDictionary = DCMDecoder.sharedDictionary
 
-    let logger: LoggerProtocol = DicomLogger.make(subsystem: "com.dicomviewer", category: "DCMDecoder")
+    let logger: LoggerProtocol = DCMDecoder.sharedLogger
 
     /// Lock for thread-safe access to decoder state.
     /// Protects all mutable properties and ensures safe concurrent access.

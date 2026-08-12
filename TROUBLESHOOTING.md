@@ -33,11 +33,11 @@ import DICOM-Swift  // Incorrect
 
 ### Error: Swift version mismatch
 
-Message: "Requires minimum Swift 5.9"
+Message: "Requires minimum Swift 6.2"
 
 Solution:
 
-1. Update Xcode to version 15.0 or later.
+1. Update Xcode to version 26.0 or later.
 2. Check Swift version:
    ```bash
    swift --version

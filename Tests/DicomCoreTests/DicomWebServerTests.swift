@@ -21,15 +21,12 @@ final class DicomWebServerTests: XCTestCase {
     func testDICOMwebDocumentationExposesScopedConformanceMatrix() throws {
         let conformance = try Self.packageText("Sources/DicomCore/DicomCore.docc/Articles/ConformanceStatement.md")
         let readme = try Self.packageText("README.md")
-        let gaps = try Self.packageText("IMPLEMENTATION_GAPS.md")
-
         for row in DicomWebConformanceMatrix.packageDefault.rows {
             XCTAssertTrue(conformance.contains(row.feature), "Missing \(row.feature) from conformance DocC.")
         }
         XCTAssertTrue(conformance.contains("not a complete production PACS"))
         XCTAssertFalse(conformance.contains("| **No DICOM Network** |"))
         XCTAssertTrue(readme.contains("DicomWebConformanceMatrix.packageDefault"))
-        XCTAssertTrue(gaps.contains("Status: scoped and guarded"))
     }
 
     func testQIDOWADOAndSTOWRoutesThroughClientSmoke() async throws {

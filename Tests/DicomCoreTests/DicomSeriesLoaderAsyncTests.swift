@@ -2,7 +2,6 @@ import XCTest
 import simd
 @testable import DicomCore
 
-@available(macOS 10.15, iOS 13.0, *)
 final class DicomSeriesLoaderAsyncTests: XCTestCase {
 
     private func makeTemporaryDirectory(prefix: String) throws -> URL {

@@ -9,8 +9,10 @@ import Foundation
 
 enum PerformanceBudgetStage: String, CaseIterable, Codable {
     case decode
+    case volumeAssembly
     case gpuUpload
-    case progressiveFrame
+    case mprRender
+    case volumeRender
     case snapshot
     case peakMemory
 }

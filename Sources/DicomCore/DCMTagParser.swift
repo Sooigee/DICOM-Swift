@@ -194,7 +194,9 @@ internal final class DCMTagParser {
     ///   - littleEndian: Byte order flag (may be modified for big endian detection)
     ///   - bigEndianTransferSyntax: Flag indicating big endian transfer syntax
     ///   - explicitVR: Whether the active transfer syntax encodes explicit VR fields
-    /// - Returns: Tag value as 32-bit integer (group << 16 | element)
+    /// - Returns: Tag value as 32-bit integer (group << 16 | element), or `-1`
+    ///   when fewer than four bytes remain. Zero is a valid value for the
+    ///   Command Group Length tag `(0000,0000)`.
     internal func getNextTag(
         location: inout Int,
         data: Data,
@@ -204,7 +206,7 @@ internal final class DCMTagParser {
     ) -> Int {
         // Check if we have enough data to read a tag
         guard location + 4 <= data.count else {
-            return 0  // Return 0 to signal end of data
+            return -1
         }
 
         let group = Int(binaryReader.readShort(location: &location))
@@ -218,7 +220,7 @@ internal final class DCMTagParser {
             littleEndian = false
             actualGroup = 0x0008
             guard location + 2 <= data.count else {
-                return 0
+                return -1
             }
             element = Int(UInt16(data[location]) << 8 | UInt16(data[location + 1]))
             location += 2

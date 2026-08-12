@@ -42,7 +42,6 @@ extension DCMDecoder {
     /// - Throws: ``DICOMError/fileNotFound(path:)`` if the file does not exist,
     ///   or ``DICOMError/invalidDICOMFormat(reason:)`` if the file cannot be
     ///   parsed as valid DICOM.
-    @available(macOS 10.15, iOS 13.0, *)
     public convenience init(contentsOf url: URL) async throws {
         // Initialize with default state
         self.init()
@@ -84,7 +83,6 @@ extension DCMDecoder {
     /// - Throws: ``DICOMError/fileNotFound(path:)`` if the file does not exist,
     ///   or ``DICOMError/invalidDICOMFormat(reason:)`` if the file cannot be
     ///   parsed as valid DICOM.
-    @available(macOS 10.15, iOS 13.0, *)
     public convenience init(contentsOfFile path: String) async throws {
         // Initialize with default state
         self.init()
@@ -129,7 +127,6 @@ extension DCMDecoder {
     /// - Throws: ``DICOMError/fileNotFound(path:)`` if the file does not exist,
     ///   or ``DICOMError/invalidDICOMFormat(reason:)`` if the file cannot be
     ///   parsed as valid DICOM.
-    @available(macOS 10.15, iOS 13.0, *)
     public static func load(from url: URL) async throws -> Self {
         try await Self(contentsOf: url)
     }
@@ -161,7 +158,6 @@ extension DCMDecoder {
     /// - Throws: ``DICOMError/fileNotFound(path:)`` if the file does not exist,
     ///   or ``DICOMError/invalidDICOMFormat(reason:)`` if the file cannot be
     ///   parsed as valid DICOM.
-    @available(macOS 10.15, iOS 13.0, *)
     public static func load(fromFile path: String) async throws -> Self {
         try await Self(contentsOfFile: path)
     }
@@ -171,7 +167,6 @@ extension DCMDecoder {
     /// Loads and decodes a DICOM file asynchronously
     /// - Parameter filename: Path to the DICOM file
     /// - Returns: True if the file was successfully loaded and decoded
-    @available(macOS 10.15, iOS 13.0, *)
     public func loadDICOMFileAsync(_ filename: String) async -> Bool {
         return await withCheckedContinuation { continuation in
             Task.detached(priority: .userInitiated) {
@@ -185,7 +180,6 @@ extension DCMDecoder {
 
     /// Retrieves 16-bit pixels asynchronously
     /// - Returns: Array of 16-bit pixel values or nil
-    @available(macOS 10.15, iOS 13.0, *)
     public func getPixels16Async() async -> [UInt16]? {
         return await withCheckedContinuation { continuation in
             Task.detached(priority: .userInitiated) {
@@ -196,7 +190,6 @@ extension DCMDecoder {
 
     /// Retrieves 8-bit pixels asynchronously
     /// - Returns: Array of 8-bit pixel values or nil
-    @available(macOS 10.15, iOS 13.0, *)
     public func getPixels8Async() async -> [UInt8]? {
         return await withCheckedContinuation { continuation in
             Task.detached(priority: .userInitiated) {
@@ -207,7 +200,6 @@ extension DCMDecoder {
 
     /// Retrieves 24-bit RGB pixels asynchronously
     /// - Returns: Array of 24-bit pixel values or nil
-    @available(macOS 10.15, iOS 13.0, *)
     public func getPixels24Async() async -> [UInt8]? {
         return await withCheckedContinuation { continuation in
             Task.detached(priority: .userInitiated) {
@@ -219,7 +211,6 @@ extension DCMDecoder {
     /// Retrieves downsampled thumbnail pixels asynchronously
     /// - Parameter maxDimension: Maximum dimension for the thumbnail
     /// - Returns: Tuple with downsampled pixels and dimensions, or nil
-    @available(macOS 10.15, iOS 13.0, *)
     public func getDownsampledPixels16Async(maxDimension: Int = 150) async -> (pixels: [UInt16], width: Int, height: Int)? {
         return await withCheckedContinuation { continuation in
             Task.detached(priority: .utility) {
@@ -234,7 +225,6 @@ extension DCMDecoder {
     /// - Parameters:
     ///   - maxDimension: Maximum length (in pixels) of the longer image side after downsampling; aspect ratio is preserved. Default is 150.
     /// - Returns: A tuple `(pixels: [UInt8], width: Int, height: Int)` containing the downsampled pixel data and its width and height, or `nil` if pixel data is not available.
-    @available(macOS 10.15, iOS 13.0, *)
     public func getDownsampledPixels8Async(maxDimension: Int = 150) async -> (pixels: [UInt8], width: Int, height: Int)? {
         return await withCheckedContinuation { continuation in
             Task.detached(priority: .utility) {
@@ -282,7 +272,6 @@ extension DCMDecoder {
     ///   - urls: The file URLs to load.
     ///   - maxConcurrency: The maximum number of files to load concurrently. Defaults to 4; values less than 1 will effectively behave like a single concurrent task.
     /// - Returns: An array of `DicomBatchResult` corresponding to `urls`, ordered to match the input. An empty `urls` array yields an empty result.
-    @available(macOS 10.15, iOS 13.0, *)
     public static func loadBatch(
         urls: [URL],
         maxConcurrency: Int = 4
@@ -345,7 +334,6 @@ extension DCMDecoder {
     /// - Parameters:
     ///   - url: The file `URL` of the DICOM to load.
     /// - Returns: A `DicomBatchResult` containing the original `url` and either a loaded `DCMDecoder` on success or the encountered `DICOMError` on failure.
-    @available(macOS 10.15, iOS 13.0, *)
     private static func loadSingleFile(url: URL) async -> DicomBatchResult {
         do {
             let decoder = try await DCMDecoder(contentsOf: url)
@@ -363,7 +351,6 @@ extension DCMDecoder {
 /// Contains either a successfully loaded decoder or an error describing
 /// the failure. This allows batch operations to continue processing
 /// remaining files even if some files fail to load.
-@available(macOS 10.15, iOS 13.0, *)
 public struct DicomBatchResult: Sendable {
     /// The file URL that was processed
     public let url: URL

@@ -15,6 +15,20 @@ final class DicomRTObjectsTests: XCTestCase {
             string(.modality, vr: .CS, "RTSTRUCT"),
             string(.structureSetLabel, vr: .SH, "SS1"),
             string(.structureSetName, vr: .LO, "Plan contours"),
+            sequence(.referencedFrameOfReferenceSequence, [
+                DicomDataSet(elements: [
+                    string(.frameOfReferenceUID, vr: .UI, "2.25.1003"),
+                    sequence(.rtReferencedStudySequence, [
+                        DicomDataSet(elements: [
+                            sequence(.rtReferencedSeriesSequence, [
+                                DicomDataSet(elements: [
+                                    string(.seriesInstanceUID, vr: .UI, "2.25.1004")
+                                ])
+                            ])
+                        ])
+                    ])
+                ])
+            ]),
             sequence(.structureSetROISequence, [
                 DicomDataSet(elements: [
                     isValue(.roiNumber, 7),
@@ -61,6 +75,7 @@ final class DicomRTObjectsTests: XCTestCase {
 
         XCTAssertEqual(structureSet.sopInstanceUID, "2.25.1002")
         XCTAssertEqual(structureSet.label, "SS1")
+        XCTAssertEqual(structureSet.referencedSeriesInstanceUIDs, ["2.25.1004"])
         XCTAssertEqual(structureSet.rois.count, 1)
         XCTAssertEqual(structureSet.rois[0].number, 7)
         XCTAssertEqual(structureSet.rois[0].name, "PTV")

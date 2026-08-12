@@ -170,6 +170,12 @@ public enum DicomTag: Int {
     /// (0028,0103) - Pixel Representation (0=unsigned, 1=signed)
     case pixelRepresentation = 0x00280103
 
+    /// (0028,0106) - Smallest Image Pixel Value
+    case smallestImagePixelValue = 0x00280106
+
+    /// (0028,0107) - Largest Image Pixel Value
+    case largestImagePixelValue = 0x00280107
+
     // MARK: - Image Display Parameters
 
     /// (0028,1050) - Window Center
@@ -189,6 +195,12 @@ public enum DicomTag: Int {
 
     /// (0028,1055) - Window Center & Width Explanation
     case windowCenterWidthExplanation = 0x00281055
+
+    /// (0028,1056) - VOI LUT Function
+    case voiLUTFunction = 0x00281056
+
+    /// (0028,9132) - Frame VOI LUT Sequence
+    case frameVOILUTSequence = 0x00289132
 
     /// (0028,3000) - Modality LUT Sequence
     case modalityLUTSequence = 0x00283000
@@ -452,6 +464,21 @@ public enum DicomTag: Int {
 
     /// (0020,9157) - Dimension Index Values
     case dimensionIndexValues = 0x00209157
+
+    /// (0020,9164) - Dimension Organization UID
+    case dimensionOrganizationUID = 0x00209164
+
+    /// (0020,9165) - Dimension Index Pointer
+    case dimensionIndexPointer = 0x00209165
+
+    /// (0020,9167) - Functional Group Pointer
+    case functionalGroupPointer = 0x00209167
+
+    /// (0020,9221) - Dimension Organization Sequence
+    case dimensionOrganizationSequence = 0x00209221
+
+    /// (0020,9222) - Dimension Index Sequence
+    case dimensionIndexSequence = 0x00209222
 
     /// (0018,0050) - Slice Thickness
     case sliceThickness = 0x00180050

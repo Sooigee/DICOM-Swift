@@ -621,7 +621,6 @@ final class DCMDecoderIntegrationTests: XCTestCase {
 
     // MARK: - Concurrent Access Tests
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testConcurrentFileLoading() async throws {
         let file = try getAnyDICOMFile()
 
@@ -740,7 +739,6 @@ final class DCMDecoderIntegrationTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testCompleteWorkflowWithAsyncThrowingAPI() async throws {
         let file = try getAnyDICOMFile()
 
@@ -878,7 +876,6 @@ final class DCMDecoderIntegrationTests: XCTestCase {
         }
     }
 
-    @available(macOS 10.15, iOS 13.0, *)
     func testNewAPIWithMultipleFilesAsync() async throws {
         // Test loading multiple files concurrently with new async API
         let file = try getAnyDICOMFile()

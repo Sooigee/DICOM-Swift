@@ -184,6 +184,41 @@ final class DicomDataSetWriterTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(decoder.getPixels16()), [47])
     }
 
+    func test_writerRoundTripsLongTextWithoutSplittingOrTrimming() throws {
+        let studyCommentsTag = 0x0032_4000
+        let comment = "  linha 1\nRenée\\B"
+        let transferSyntaxes: [DicomTransferSyntax] = [
+            .explicitVRLittleEndian,
+            .implicitVRLittleEndian,
+            .deflatedExplicitVRLittleEndian
+        ]
+
+        for transferSyntax in transferSyntaxes {
+            var dataSet = makeBaseDataSet(pixelBytes: Data([0x31, 0x00]))
+            dataSet.set(DicomDataElement(
+                tag: DicomTag.specificCharacterSet.rawValue,
+                vr: .CS,
+                value: .strings(["ISO_IR 192"])
+            ))
+            dataSet.set(DicomDataElement(
+                tag: studyCommentsTag,
+                vr: .LT,
+                value: .strings([comment])
+            ))
+
+            let data = try DicomDataSetWriter.part10Data(
+                from: dataSet,
+                options: DicomPart10WriterOptions(transferSyntax: transferSyntax)
+            )
+            let decoder = try DCMDecoder(data: data)
+            let element = try XCTUnwrap(decoder.dataSet.element(for: studyCommentsTag))
+
+            XCTAssertEqual(element.vr, .LT, transferSyntax.rawValue)
+            XCTAssertEqual(element.stringValue, comment, transferSyntax.rawValue)
+            XCTAssertEqual(element.stringValues, [comment], transferSyntax.rawValue)
+        }
+    }
+
     func testWriterPreservesEncapsulatedPixelDataForCompressedPassThrough() throws {
         let firstFrame = Data([0x91, 0x92])
         let secondFrame = Data([0xA1, 0xA2])

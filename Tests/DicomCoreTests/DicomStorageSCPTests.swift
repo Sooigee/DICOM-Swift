@@ -2,8 +2,125 @@ import Foundation
 import DicomTestSupport
 @testable import DicomCore
 import XCTest
+#if canImport(Network)
+import Network
+#endif
 
 final class DicomStorageSCPTests: XCTestCase {
+    func test_intranetPeerAccess_acceptsOnlyLoopbackAndPrivateIPv4Addresses() {
+        let accepted = [
+            "127.0.0.1",
+            "127.255.255.254",
+            "10.0.0.1",
+            "10.255.255.254",
+            "172.16.0.1",
+            "172.31.255.254",
+            "192.168.0.1",
+            "192.168.255.254"
+        ]
+        let rejected = [
+            "8.8.8.8",
+            "172.15.255.255",
+            "172.32.0.0",
+            "169.254.1.1",
+            "224.0.0.1",
+            "010.0.0.1",
+            "192.168.001.1",
+            "１２７.0.0.1",
+            "pacs.example.com"
+        ]
+
+        for address in accepted {
+            XCTAssertTrue(DicomStorageSCPPeerAccess.isIntranetAddress(address), address)
+        }
+        for address in rejected {
+            XCTAssertFalse(DicomStorageSCPPeerAccess.isIntranetAddress(address), address)
+        }
+    }
+
+    func test_intranetPeerAccess_acceptsOnlyLoopbackAndPrivateIPv6Addresses() {
+        let accepted = [
+            "::1",
+            "fc00::1",
+            "fd12:3456:789a::1",
+            "::ffff:127.0.0.1",
+            "::ffff:192.168.1.10"
+        ]
+        let rejected = [
+            "::",
+            "fe80::1",
+            "fe80::1%en0",
+            "fd12:3456:789a::1%en0",
+            "2001:db8::1",
+            "2001:4860:4860::8888",
+            "ff02::1"
+        ]
+
+        for address in accepted {
+            XCTAssertTrue(DicomStorageSCPPeerAccess.isIntranetAddress(address), address)
+        }
+        for address in rejected {
+            XCTAssertFalse(DicomStorageSCPPeerAccess.isIntranetAddress(address), address)
+        }
+    }
+
+    func test_storageSCPConfiguration_intranetRestrictionIsOptIn() {
+        let unrestricted = DicomStorageSCPConfiguration(aeTitle: "MTKDEMO")
+        let restricted = DicomStorageSCPConfiguration(
+            aeTitle: "MTKDEMO",
+            acceptOnlyIntranet: true
+        )
+
+        XCTAssertFalse(unrestricted.acceptOnlyIntranet)
+        XCTAssertTrue(restricted.acceptOnlyIntranet)
+    }
+
+    #if canImport(Network)
+    func test_intranetPeerAccess_rejectsPublicEndpointOnlyWhenRestrictionIsEnabled() {
+        let privateEndpoint = NWEndpoint.hostPort(host: "192.168.1.20", port: 11112)
+        let publicEndpoint = NWEndpoint.hostPort(host: "8.8.8.8", port: 11112)
+        let hostnameEndpoint = NWEndpoint.hostPort(host: "localhost", port: 11112)
+        let scopedEndpoint = NWEndpoint.hostPort(host: "fd12:3456:789a::1%en0", port: 11112)
+
+        XCTAssertTrue(DicomStorageSCPPeerAccess.allows(privateEndpoint, acceptOnlyIntranet: true))
+        XCTAssertFalse(DicomStorageSCPPeerAccess.allows(publicEndpoint, acceptOnlyIntranet: true))
+        XCTAssertFalse(DicomStorageSCPPeerAccess.allows(hostnameEndpoint, acceptOnlyIntranet: true))
+        XCTAssertFalse(DicomStorageSCPPeerAccess.allows(scopedEndpoint, acceptOnlyIntranet: true))
+        XCTAssertTrue(DicomStorageSCPPeerAccess.allows(publicEndpoint, acceptOnlyIntranet: false))
+    }
+    #endif
+
+    func testStorageSCPAcceptsVerification() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = DicomStorageSCPService(
+            configuration: DicomStorageSCPConfiguration(
+                aeTitle: "MTKDEMO",
+                transferSyntaxes: [.explicitVRLittleEndian],
+                enableStorageCommitment: false
+            ),
+            storage: try DicomFileStorageCache(directoryURL: directory)
+        )
+        let transport = try StorageSCUTransport(inboundPDUs: [
+            associationRequestPDU(contexts: [
+                DicomPresentationContextRequest(
+                    id: 1,
+                    abstractSyntaxUID: DicomNetworkUID.verificationSOPClass,
+                    transferSyntaxes: [.explicitVRLittleEndian]
+                )
+            ]),
+            commandPDU(cEchoRequest(), contextID: 1),
+            try DicomPDUCodec.encode(.releaseRequest)
+        ])
+
+        let result = try service.handleAssociation(using: transport)
+
+        XCTAssertTrue(result.storedInstances.isEmpty)
+        XCTAssertEqual(transport.writtenCommands.count, 1)
+        XCTAssertEqual(transport.writtenCommands.first?.commandField, DicomDIMSECommandField.cEchoRSP)
+        XCTAssertEqual(transport.writtenCommands.first?.status, 0)
+    }
+
     func testStorageSCPContinuesAfterOneStoreFailure() throws {
         let storage = FailFirstStorage()
         let service = DicomStorageSCPService(
@@ -233,7 +350,7 @@ final class DicomStorageSCPTests: XCTestCase {
                         privateKeyPath: fixture.serverPrivateKeyPath,
                         trustStorePath: fixture.caCertificatePath
                     ),
-                    securityProfile: .bcp195
+                    securityProfile: .bcp195RFC8996
                 )
             ),
             storage: try DicomFileStorageCache(directoryURL: directory)
@@ -242,6 +359,52 @@ final class DicomStorageSCPTests: XCTestCase {
         _ = try DicomStorageSCPServer(service: service)
         #else
         throw skipNetworkSecurityTLS("Network/Security TLS listener tests run only on macOS.")
+        #endif
+    }
+
+    @MainActor
+    func test_storageSCPServerStop_releasesPortBeforeReturning() async throws {
+        #if canImport(Network)
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let firstService = DicomStorageSCPService(
+            configuration: DicomStorageSCPConfiguration(aeTitle: "MTKDEMO", port: 0),
+            storage: try DicomFileStorageCache(directoryURL: directory)
+        )
+        let firstServer = try DicomStorageSCPServer(service: firstService)
+        try firstServer.start()
+        let port = try XCTUnwrap(firstServer.listeningPort)
+
+        await firstServer.stop()
+
+        let replacementService = DicomStorageSCPService(
+            configuration: DicomStorageSCPConfiguration(aeTitle: "MTKDEMO", port: port),
+            storage: try DicomFileStorageCache(directoryURL: directory)
+        )
+        let replacementServer = try DicomStorageSCPServer(service: replacementService)
+        XCTAssertNoThrow(try replacementServer.start())
+        await replacementServer.stop()
+        #else
+        throw XCTSkip("Network framework is unavailable on this platform.")
+        #endif
+    }
+
+    func test_storageSCPServerStop_withoutStart_returnsImmediately() async throws {
+        #if canImport(Network)
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = DicomStorageSCPService(
+            configuration: DicomStorageSCPConfiguration(aeTitle: "MTKDEMO", port: 0, timeout: 2),
+            storage: try DicomFileStorageCache(directoryURL: directory)
+        )
+        let server = try DicomStorageSCPServer(service: service)
+        let startedAt = Date()
+
+        await server.stop()
+
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 0.5)
+        #else
+        throw XCTSkip("Network framework is unavailable on this platform.")
         #endif
     }
 
@@ -256,7 +419,7 @@ final class DicomStorageSCPTests: XCTestCase {
                 privateKeyPath: fixture.serverPrivateKeyPath,
                 trustStorePath: fixture.caCertificatePath
             ),
-            securityProfile: .extendedBCP195
+            securityProfile: .bcp195RFC8996
         )
 
         let prepared = try DicomTLSOptionsFactory.preparedParameters(for: tls, role: .server)
@@ -264,7 +427,7 @@ final class DicomStorageSCPTests: XCTestCase {
         XCTAssertEqual(prepared.tlsContext?.role, .server)
         XCTAssertEqual(prepared.tlsContext?.hasLocalIdentity, true)
         XCTAssertEqual(prepared.tlsContext?.trustedCertificateCount, 1)
-        XCTAssertEqual(prepared.tlsContext?.securityProfile, .extendedBCP195)
+        XCTAssertEqual(prepared.tlsContext?.securityProfile, .bcp195RFC8996)
         XCTAssertEqual(prepared.tlsContext?.peerAuthenticationRequired, true)
         #else
         throw skipNetworkSecurityTLS("Network/Security TLS listener tests run only on macOS.")
@@ -284,7 +447,7 @@ final class DicomStorageSCPTests: XCTestCase {
                 tls: DicomTLSConfiguration(
                     mode: .enabled,
                     material: DicomTLSMaterial(certificatePath: fixture.serverCertificatePath),
-                    securityProfile: .bcp195
+                    securityProfile: .bcp195RFC8996
                 )
             ),
             storage: try DicomFileStorageCache(directoryURL: directory)
@@ -402,6 +565,15 @@ private func cStoreRequest(
         commandDataSetType: DicomDIMSECommandDataSetType.hasDataSet,
         priority: 0,
         affectedSOPInstanceUID: sopInstanceUID
+    )
+}
+
+private func cEchoRequest(messageID: UInt16 = 1) -> DicomDIMSECommandSet {
+    DicomDIMSECommandSet(
+        affectedSOPClassUID: DicomNetworkUID.verificationSOPClass,
+        commandField: DicomDIMSECommandField.cEchoRQ,
+        messageID: messageID,
+        commandDataSetType: DicomDIMSECommandDataSetType.noDataSet
     )
 }
 

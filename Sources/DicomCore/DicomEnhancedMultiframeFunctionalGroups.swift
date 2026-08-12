@@ -6,15 +6,18 @@ public struct DicomEnhancedMultiframeFunctionalGroups: Equatable, Sendable {
     public let shared: DicomFrameFunctionalGroups?
     public let perFrame: [DicomFrameFunctionalGroups]
     public let frames: [DicomEnhancedFrame]
+    public let dimensionOrganization: DicomEnhancedDimensionOrganization?
 
     public init(
         shared: DicomFrameFunctionalGroups?,
         perFrame: [DicomFrameFunctionalGroups],
-        declaredFrameCount: Int
+        declaredFrameCount: Int,
+        dimensionOrganization: DicomEnhancedDimensionOrganization? = nil
     ) {
         let frameCount = max(declaredFrameCount, perFrame.count)
         self.shared = shared
         self.perFrame = perFrame
+        self.dimensionOrganization = dimensionOrganization
         self.frames = (0..<frameCount).map { index in
             let resolved = perFrame[safe: index]?.resolving(shared: shared) ?? DicomFrameFunctionalGroups().resolving(shared: shared)
             return DicomEnhancedFrame(index: index, functionalGroups: resolved)
@@ -67,6 +70,33 @@ public struct DicomEnhancedMultiframeFunctionalGroups: Equatable, Sendable {
     }
 }
 
+/// Dimension Organization and Dimension Index definitions that describe how
+/// Enhanced frames are partitioned into logical stacks and other dimensions.
+public struct DicomEnhancedDimensionOrganization: Equatable, Sendable {
+    public let organizationUIDs: [String]
+    public let indexes: [DicomEnhancedDimensionIndex]
+
+    public init(organizationUIDs: [String], indexes: [DicomEnhancedDimensionIndex]) {
+        self.organizationUIDs = organizationUIDs
+        self.indexes = indexes
+    }
+}
+
+/// One top-level Dimension Index Sequence item. Optional fields are preserved
+/// so the volume validator can reject malformed definitions instead of
+/// silently dropping them during parsing.
+public struct DicomEnhancedDimensionIndex: Equatable, Sendable {
+    public let organizationUID: String?
+    public let dimensionIndexPointer: Int?
+    public let functionalGroupPointer: Int?
+
+    public init(organizationUID: String?, dimensionIndexPointer: Int?, functionalGroupPointer: Int?) {
+        self.organizationUID = organizationUID
+        self.dimensionIndexPointer = dimensionIndexPointer
+        self.functionalGroupPointer = functionalGroupPointer
+    }
+}
+
 /// Functional group macros resolved for one frame.
 public struct DicomFrameFunctionalGroups: Equatable, Sendable {
     public let frameContent: DicomFrameContent?
@@ -75,6 +105,7 @@ public struct DicomFrameFunctionalGroups: Equatable, Sendable {
     public let planeOrientation: DicomPlaneOrientation?
     public let derivationImage: DicomDerivationImage?
     public let pixelValueTransformation: DicomPixelValueTransformation?
+    public let frameVOI: DicomFrameVOI?
 
     public init(
         frameContent: DicomFrameContent? = nil,
@@ -82,7 +113,8 @@ public struct DicomFrameFunctionalGroups: Equatable, Sendable {
         planePosition: DicomPlanePosition? = nil,
         planeOrientation: DicomPlaneOrientation? = nil,
         derivationImage: DicomDerivationImage? = nil,
-        pixelValueTransformation: DicomPixelValueTransformation? = nil
+        pixelValueTransformation: DicomPixelValueTransformation? = nil,
+        frameVOI: DicomFrameVOI? = nil
     ) {
         self.frameContent = frameContent
         self.pixelMeasures = pixelMeasures
@@ -90,6 +122,7 @@ public struct DicomFrameFunctionalGroups: Equatable, Sendable {
         self.planeOrientation = planeOrientation
         self.derivationImage = derivationImage
         self.pixelValueTransformation = pixelValueTransformation
+        self.frameVOI = frameVOI
     }
 
     public func resolving(shared: DicomFrameFunctionalGroups?) -> DicomFrameFunctionalGroups {
@@ -99,7 +132,8 @@ public struct DicomFrameFunctionalGroups: Equatable, Sendable {
             planePosition: planePosition ?? shared?.planePosition,
             planeOrientation: planeOrientation ?? shared?.planeOrientation,
             derivationImage: derivationImage ?? shared?.derivationImage,
-            pixelValueTransformation: pixelValueTransformation ?? shared?.pixelValueTransformation
+            pixelValueTransformation: pixelValueTransformation ?? shared?.pixelValueTransformation,
+            frameVOI: frameVOI ?? shared?.frameVOI
         )
     }
 }
@@ -257,13 +291,38 @@ enum DicomEnhancedMultiframeParser {
     static func makeFunctionalGroups(
         sharedItems: [DicomSequenceItem],
         perFrameItems: [DicomSequenceItem],
-        declaredFrameCount: Int
+        declaredFrameCount: Int,
+        dimensionOrganizationItems: [DicomSequenceItem] = [],
+        dimensionIndexItems: [DicomSequenceItem] = []
     ) -> DicomEnhancedMultiframeFunctionalGroups? {
         guard !sharedItems.isEmpty || !perFrameItems.isEmpty else { return nil }
         return DicomEnhancedMultiframeFunctionalGroups(
             shared: sharedItems.first.map { functionalGroups(from: $0.dataSet) },
             perFrame: perFrameItems.map { functionalGroups(from: $0.dataSet) },
-            declaredFrameCount: declaredFrameCount
+            declaredFrameCount: declaredFrameCount,
+            dimensionOrganization: dimensionOrganization(
+                organizationItems: dimensionOrganizationItems,
+                indexItems: dimensionIndexItems
+            )
+        )
+    }
+
+    private static func dimensionOrganization(
+        organizationItems: [DicomSequenceItem],
+        indexItems: [DicomSequenceItem]
+    ) -> DicomEnhancedDimensionOrganization? {
+        guard !organizationItems.isEmpty || !indexItems.isEmpty else { return nil }
+        return DicomEnhancedDimensionOrganization(
+            organizationUIDs: organizationItems.compactMap {
+                $0.dataSet.string(for: .dimensionOrganizationUID)
+            },
+            indexes: indexItems.map { item in
+                DicomEnhancedDimensionIndex(
+                    organizationUID: item.dataSet.string(for: .dimensionOrganizationUID),
+                    dimensionIndexPointer: item.dataSet.int(for: .dimensionIndexPointer),
+                    functionalGroupPointer: item.dataSet.int(for: .functionalGroupPointer)
+                )
+            }
         )
     }
 
@@ -275,8 +334,28 @@ enum DicomEnhancedMultiframeParser {
             planeOrientation: dataSet.firstNestedDataSet(for: .planeOrientationSequence).flatMap(planeOrientation),
             derivationImage: derivationImage(from: dataSet.sequenceItems(for: .derivationImageSequence)),
             pixelValueTransformation: dataSet.firstNestedDataSet(for: .pixelValueTransformationSequence)
-                .flatMap(pixelValueTransformation)
+                .flatMap(pixelValueTransformation),
+            frameVOI: dataSet.firstNestedDataSet(for: .frameVOILUTSequence).flatMap(frameVOI)
         )
+    }
+
+    private static func frameVOI(from dataSet: DicomDataSet) -> DicomFrameVOI? {
+        let centers = dataSet.decimalStrings(for: .windowCenter)
+        let widths = dataSet.decimalStrings(for: .windowWidth)
+        let explanations = dataSet.strings(for: .windowCenterWidthExplanation)
+        let windows = (0..<min(centers.count, widths.count)).compactMap { index in
+            DicomFrameVOIWindow(
+                center: centers[index],
+                width: widths[index],
+                explanation: explanations[safe: index]
+            )
+        }
+        guard !windows.isEmpty else { return nil }
+        let normalizedFunction = dataSet.string(for: .voiLUTFunction)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+        let lutFunction = normalizedFunction?.isEmpty == false ? normalizedFunction : nil
+        return DicomFrameVOI(windows: windows, lutFunction: lutFunction)
     }
 
     private static func pixelValueTransformation(from dataSet: DicomDataSet) -> DicomPixelValueTransformation? {

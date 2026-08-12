@@ -29,31 +29,8 @@ final class DicomAppliedTLSContext {
     #if canImport(Security)
     private let protocolIdentity: sec_identity_t?
     #endif
-    #if canImport(Security) && os(macOS)
-    private let temporaryKeychain: DicomTemporaryKeychain?
-    #endif
 
-    #if canImport(Security) && os(macOS)
-    init(role: DicomTLSRole,
-         serverName: String?,
-         hasLocalIdentity: Bool,
-         trustedCertificateCount: Int,
-         securityProfile: DicomTLSSecurityProfile,
-         minimumProtocolVersionName: String?,
-         peerAuthenticationRequired: Bool,
-         protocolIdentity: sec_identity_t?,
-         temporaryKeychain: DicomTemporaryKeychain?) {
-        self.role = role
-        self.serverName = serverName
-        self.hasLocalIdentity = hasLocalIdentity
-        self.trustedCertificateCount = trustedCertificateCount
-        self.securityProfile = securityProfile
-        self.minimumProtocolVersionName = minimumProtocolVersionName
-        self.peerAuthenticationRequired = peerAuthenticationRequired
-        self.protocolIdentity = protocolIdentity
-        self.temporaryKeychain = temporaryKeychain
-    }
-    #elseif canImport(Security)
+    #if canImport(Security)
     init(role: DicomTLSRole,
          serverName: String?,
          hasLocalIdentity: Bool,
@@ -108,10 +85,8 @@ enum DicomTLSOptionsFactory {
         switch profile {
         case .none:
             return nil
-        case .nonDowngradingBCP195, .bcp195, .extendedBCP195:
+        case .bcp195RFC8996:
             return "TLSv1.2"
-        case .basicRetired, .aesRetired, .authenticatedUnencryptedRetired:
-            return "TLSv1.0"
         }
     }
 
@@ -151,7 +126,9 @@ enum DicomTLSOptionsFactory {
             sec_protocol_options_set_local_identity(options.securityProtocolOptions, protocolIdentity)
         }
         #else
-        let hasIdentityMaterial = tls.material?.certificatePath != nil || tls.material?.privateKeyPath != nil
+        let hasIdentityMaterial = tls.material?.certificatePath != nil
+            || tls.material?.privateKeyPath != nil
+            || tls.material?.privateKeyData != nil
         if hasIdentityMaterial {
             throw DicomNetworkError.tlsConfigurationInvalid(
                 "Separate certificate and private key TLS identity loading is only supported on macOS."
@@ -191,8 +168,7 @@ enum DicomTLSOptionsFactory {
             securityProfile: tls.securityProfile,
             minimumProtocolVersionName: minimumTLSProtocolVersionName(for: tls.securityProfile),
             peerAuthenticationRequired: peerAuthenticationRequired,
-            protocolIdentity: protocolIdentity,
-            temporaryKeychain: localIdentity.keychain
+            protocolIdentity: protocolIdentity
         )
         #else
         let context = DicomAppliedTLSContext(
@@ -219,10 +195,8 @@ enum DicomTLSOptionsFactory {
         switch profile {
         case .none:
             return nil
-        case .nonDowngradingBCP195, .bcp195, .extendedBCP195:
+        case .bcp195RFC8996:
             return .TLSv12
-        case .basicRetired, .aesRetired, .authenticatedUnencryptedRetired:
-            return tls_protocol_version_t(rawValue: 0x0301)
         }
     }
 
@@ -286,162 +260,55 @@ enum DicomTLSOptionsFactory {
     #if canImport(Security) && os(macOS)
     private static func localIdentityIfNeeded(
         from material: DicomTLSMaterial?
-    ) throws -> (identity: SecIdentity?, certificates: [SecCertificate], keychain: DicomTemporaryKeychain?) {
-        guard let material else { return (nil, [], nil) }
+    ) throws -> (identity: SecIdentity?, certificates: [SecCertificate]) {
+        guard let material else { return (nil, []) }
         let hasCertificate = material.certificatePath != nil
-        let hasPrivateKey = material.privateKeyPath != nil
-        guard hasCertificate || hasPrivateKey else { return (nil, [], nil) }
+        let hasPrivateKey = material.privateKeyPath != nil || material.privateKeyData != nil
+        guard hasCertificate || hasPrivateKey else { return (nil, []) }
         guard let certificatePath = material.certificatePath else {
             throw DicomNetworkError.tlsConfigurationInvalid("TLS certificate path is missing.")
         }
-        guard let privateKeyPath = material.privateKeyPath else {
+        guard hasPrivateKey else {
             throw DicomNetworkError.tlsConfigurationInvalid("TLS private key path is missing.")
         }
-        let keychain = try DicomTemporaryKeychain()
-        let certificates = try keychain.importCertificates(path: certificatePath)
+        let certificates = try certificates(at: certificatePath, purpose: "TLS certificate")
         guard let certificate = certificates.first else {
             throw DicomNetworkError.tlsConfigurationInvalid("TLS certificate import did not produce a certificate: \(certificatePath)")
         }
-        try keychain.importPrivateKey(path: privateKeyPath)
-        return (try keychain.identity(for: certificate), Array(certificates.dropFirst()), keychain)
-    }
-    #endif
-}
-
-#if canImport(Security) && os(macOS)
-/// Documented platform compatibility shim (issue #1221): the legacy
-/// `SecKeychain*` file-based keychain API is deprecated since macOS 10.10,
-/// but it remains the only supported way to mint a `SecIdentity` from PEM
-/// certificate/key material in an isolated, throwaway store for DIMSE TLS —
-/// the modern data-protection keychain (`SecItem*`) cannot host an imported
-/// identity for this flow without app-level keychain entitlements that a
-/// library cannot assume. The three deprecation warnings emitted by this
-/// type (`SecKeychainCreate`/`SecKeychainUnlock`/`SecKeychainDelete`) are
-/// intentional and confined to this shim.
-final class DicomTemporaryKeychain {
-    typealias UnlockKeychain = (SecKeychain, UInt32, UnsafeRawPointer?, Bool) -> OSStatus
-
-    private let fileURL: URL
-    private let keychain: SecKeychain
-    private let fileManager: FileManager
-
-    init(
-        fileManager: FileManager = .default,
-        directory: URL? = nil,
-        unlockKeychain: UnlockKeychain = { keychain, passwordLength, password, usePassword in
-            SecKeychainUnlock(keychain, passwordLength, password, usePassword)
-        }
-    ) throws {
-        let directory = directory ?? fileManager.temporaryDirectory
-            .appendingPathComponent("DicomDecoderTLS-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let keychainURL = directory.appendingPathComponent("identity.keychain-db")
-
-        var keychainRef: SecKeychain?
-        let password = "dicom-swift-tls"
-        let status = password.withCString {
-            SecKeychainCreate(keychainURL.path, UInt32(strlen($0)), $0, false, nil, &keychainRef)
-        }
-        guard status == errSecSuccess, let keychainRef else {
-            try? fileManager.removeItem(at: directory)
-            throw DicomNetworkError.tlsConfigurationInvalid("Unable to create temporary TLS keychain: \(status).")
-        }
-        let unlockStatus = password.withCString {
-            unlockKeychain(keychainRef, UInt32(strlen($0)), UnsafeRawPointer($0), true)
-        }
-        guard unlockStatus == errSecSuccess else {
-            Self.cleanup(keychain: keychainRef, fileURL: keychainURL, fileManager: fileManager)
-            throw DicomNetworkError.tlsConfigurationInvalid("Unable to unlock temporary TLS keychain: \(unlockStatus).")
-        }
-        fileURL = keychainURL
-        keychain = keychainRef
-        self.fileManager = fileManager
-    }
-
-    deinit {
-        Self.cleanup(keychain: keychain, fileURL: fileURL, fileManager: fileManager)
-    }
-
-    private static func cleanup(keychain: SecKeychain?, fileURL: URL, fileManager: FileManager) {
-        if let keychain {
-            SecKeychainDelete(keychain)
-        }
-        try? fileManager.removeItem(at: fileURL.deletingLastPathComponent())
-    }
-
-    func importCertificates(path: String) throws -> [SecCertificate] {
-        let items: [AnyObject]
-        if let importedItems = try importItem(
-            path: path,
-            purpose: "TLS certificate",
-            inputFormat: .formatPEMSequence,
-            itemType: .itemTypeAggregate
-        ) {
-            items = importedItems
-        } else if let importedItems = try importItem(
-            path: path,
-            purpose: "TLS certificate",
-            inputFormat: .formatUnknown,
-            itemType: .itemTypeUnknown,
-            flags: SecItemImportExportFlags()
-        ) {
-            items = importedItems
+        let privateKey: SecKey
+        if let privateKeyData = material.privateKeyData {
+            privateKey = try importPrivateKey(data: privateKeyData, fileName: "private-key.pem")
+        } else if let privateKeyPath = material.privateKeyPath {
+            let privateKeyData: Data
+            do {
+                privateKeyData = try Data(contentsOf: URL(fileURLWithPath: privateKeyPath))
+            } catch {
+                throw DicomNetworkError.tlsConfigurationInvalid("TLS private key is not readable: \(privateKeyPath)")
+            }
+            privateKey = try importPrivateKey(
+                data: privateKeyData,
+                fileName: (privateKeyPath as NSString).lastPathComponent,
+                path: privateKeyPath
+            )
         } else {
-            throw DicomNetworkError.tlsConfigurationInvalid("TLS certificate import failed: \(path)")
+            throw DicomNetworkError.tlsConfigurationInvalid("TLS private key path is missing.")
         }
-        let certificates = items.compactMap { item in
-            CFGetTypeID(item) == SecCertificateGetTypeID() ? unsafeBitCast(item, to: SecCertificate.self) : nil
-        }
-        guard !certificates.isEmpty else {
-            throw DicomNetworkError.tlsConfigurationInvalid("TLS certificate import did not produce a certificate: \(path)")
-        }
-        return certificates
-    }
-
-    func importPrivateKey(path: String) throws {
-        guard let items = try importItem(
-            path: path,
-            purpose: "TLS private key",
-            inputFormat: .formatUnknown,
-            itemType: .itemTypeUnknown,
-            flags: SecItemImportExportFlags()
-        ) else {
-            throw DicomNetworkError.tlsConfigurationInvalid("TLS private key import failed: \(path)")
-        }
-        guard firstItem(in: items, typeID: SecKeyGetTypeID(), as: SecKey.self) != nil else {
-            throw DicomNetworkError.tlsConfigurationInvalid("TLS private key import did not produce a key: \(path)")
-        }
-    }
-
-    func identity(for certificate: SecCertificate) throws -> SecIdentity {
-        var identity: SecIdentity?
-        let status = SecIdentityCreateWithCertificate(keychain, certificate, &identity)
-        guard status == errSecSuccess, let identity else {
+        guard let identity = SecIdentityCreate(nil, certificate, privateKey) else {
             throw DicomNetworkError.tlsConfigurationInvalid(
-                "TLS private key does not match certificate or identity could not be created: \(status)."
+                "TLS private key does not match certificate or identity could not be created."
             )
         }
-        return identity
+        return (identity, Array(certificates.dropFirst()))
     }
 
-    private func importItem(
-        path: String,
-        purpose: String,
-        inputFormat: SecExternalFormat,
-        itemType: SecExternalItemType,
-        flags: SecItemImportExportFlags = SecItemImportExportFlags(rawValue: 0x00000001)
-    ) throws -> [AnyObject]? {
-        let data: Data
-        do {
-            data = try Data(contentsOf: URL(fileURLWithPath: path))
-        } catch {
-            throw DicomNetworkError.tlsConfigurationInvalid("\(purpose) is not readable: \(path)")
-        }
+    private static func importPrivateKey(data: Data, fileName: String, path: String? = nil) throws -> SecKey {
         guard !data.isEmpty else {
-            throw DicomNetworkError.tlsConfigurationInvalid("\(purpose) is empty: \(path)")
+            let reason = path.map { "TLS private key is empty: \($0)" }
+                ?? "TLS private key data is empty."
+            throw DicomNetworkError.tlsConfigurationInvalid(reason)
         }
-        var format = inputFormat
-        var importedItemType = itemType
+        var format = SecExternalFormat.formatUnknown
+        var itemType = SecExternalItemType.itemTypeUnknown
         var items: CFArray?
         var keyParameters = SecItemImportExportKeyParameters(
             version: UInt32(SEC_KEY_IMPORT_EXPORT_PARAMS_VERSION),
@@ -456,30 +323,27 @@ final class DicomTemporaryKeychain {
         let status = withUnsafePointer(to: &keyParameters) {
             SecItemImport(
                 data as CFData,
-                (path as NSString).lastPathComponent as CFString,
+                fileName as CFString,
                 &format,
-                &importedItemType,
-                flags,
+                &itemType,
+                SecItemImportExportFlags(),
                 $0,
-                keychain,
+                nil,
                 &items
             )
         }
-        guard status == errSecSuccess else {
-            return nil
+        guard status == errSecSuccess, let items else {
+            let reason = path.map { "TLS private key import failed: \($0)" }
+                ?? "TLS private key data import failed."
+            throw DicomNetworkError.tlsConfigurationInvalid(reason)
         }
-        guard let items else {
-            throw DicomNetworkError.tlsConfigurationInvalid("\(purpose) import failed: \(status).")
+        for item in items as [AnyObject] where CFGetTypeID(item) == SecKeyGetTypeID() {
+            return unsafeBitCast(item, to: SecKey.self)
         }
-        return items as [AnyObject]
+        let reason = path.map { "TLS private key import did not produce a key: \($0)" }
+            ?? "TLS private key data did not produce a key."
+        throw DicomNetworkError.tlsConfigurationInvalid(reason)
     }
-
-    private func firstItem<T: AnyObject>(in items: [AnyObject], typeID: CFTypeID, as type: T.Type) -> T? {
-        for item in items where CFGetTypeID(item) == typeID {
-            return unsafeBitCast(item, to: T.self)
-        }
-        return nil
-    }
+    #endif
 }
-#endif
 #endif

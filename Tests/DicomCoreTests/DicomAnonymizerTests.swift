@@ -152,6 +152,129 @@ final class DicomAnonymizerTests: XCTestCase {
         )
     }
 
+    func testExplicitUIDValueMapRewritesOnlyMappedUIDsRecursively() throws {
+        let oldStudyUID = "2.25.17750001"
+        let newStudyUID = "2.25.17751001"
+        let oldSOPInstanceUID = "2.25.17750002"
+        let newSOPInstanceUID = "2.25.17751002"
+        let externalSOPInstanceUID = "2.25.17759999"
+        let trackingUID = "2.25.17758888"
+        let dimensionOrganizationUID = "2.25.17757777"
+
+        var dataSet = Self.makeNativeDataSet(pixelBytes: Data([1, 0, 2, 0, 3, 0, 4, 0]))
+        dataSet.set(DicomDataElement(
+            tag: DicomTag.studyInstanceUID.rawValue,
+            vr: .UI,
+            value: .strings([oldStudyUID])
+        ))
+        dataSet.set(DicomDataElement(
+            tag: DicomTag.sopInstanceUID.rawValue,
+            vr: .UI,
+            value: .strings([oldSOPInstanceUID])
+        ))
+        dataSet.set(DicomDataElement(
+            tag: 0x0062_0021,
+            vr: .UI,
+            value: .strings([trackingUID])
+        ))
+        dataSet.set(DicomDataElement(
+            tag: 0x0020_9164,
+            vr: .UI,
+            value: .strings([dimensionOrganizationUID])
+        ))
+        dataSet.set(DicomDataElement(
+            tag: 0x0008_1140,
+            vr: .SQ,
+            value: .sequence([DicomSequenceItem(dataSet: DicomDataSet(elements: [
+                DicomDataElement(
+                    tag: DicomTag.referencedSOPInstanceUID.rawValue,
+                    vr: .UI,
+                    value: .strings([oldSOPInstanceUID, externalSOPInstanceUID])
+                )
+            ]))])
+        ))
+        let source = try Self.makeNativeFile(from: dataSet)
+        var policy = DicomRewritePolicy(
+            actions: [:],
+            removePrivateTags: false,
+            uidValueReplacements: [
+                oldStudyUID: newStudyUID,
+                oldSOPInstanceUID: newSOPInstanceUID
+            ]
+        )
+        policy.removeOverlayPlanes = false
+        policy.removeTemporalAttributes = false
+
+        let result = try DicomAnonymizer(policy: policy).rewrite(source)
+
+        XCTAssertEqual(result.dataSet.string(for: .studyInstanceUID), newStudyUID)
+        XCTAssertEqual(result.dataSet.string(for: .sopInstanceUID), newSOPInstanceUID)
+        let referenced = try XCTUnwrap(
+            result.dataSet.sequenceItems(for: 0x0008_1140).first?.dataSet
+                .element(for: DicomTag.referencedSOPInstanceUID.rawValue)?.stringValues
+        )
+        XCTAssertEqual(referenced, [newSOPInstanceUID, externalSOPInstanceUID])
+        XCTAssertEqual(result.dataSet.string(for: 0x0062_0021), trackingUID)
+        XCTAssertEqual(result.dataSet.string(for: 0x0020_9164), dimensionOrganizationUID)
+        XCTAssertEqual(result.uidMap, [
+            oldStudyUID: newStudyUID,
+            oldSOPInstanceUID: newSOPInstanceUID
+        ])
+        XCTAssertEqual(try Self.open(result.fileData).getPixels16(), [1, 2, 3, 4])
+    }
+
+    func testExplicitUIDValueMapPreservesEncapsulatedPayloadAndTransferSyntax() throws {
+        let oldSOPInstanceUID = "2.25.17750003"
+        let newSOPInstanceUID = "2.25.17751003"
+        let codestream = makeJPEGLosslessStream(
+            planes: [[100, 200, 300, 400]], width: 2, height: 2, precision: 16
+        )
+        var dataSet = EncapsulatedFixtureFactory.makeDataSet(
+            transferSyntax: .jpegLosslessFirstOrder,
+            fragments: [codestream],
+            declaredFrames: 1,
+            rows: 2,
+            columns: 2,
+            bitsAllocated: 16,
+            bitsStored: 16,
+            highBit: 15
+        )
+        dataSet.set(DicomDataElement(
+            tag: DicomTag.sopInstanceUID.rawValue,
+            vr: .UI,
+            value: .strings([oldSOPInstanceUID])
+        ))
+        let source = try DicomDataSetWriter.part10Data(
+            from: dataSet,
+            options: DicomPart10WriterOptions(
+                transferSyntax: .jpegLosslessFirstOrder,
+                mediaStorageSOPClassUID: DicomDataSetWriter.defaultSecondaryCaptureImageStorageSOPClassUID,
+                mediaStorageSOPInstanceUID: oldSOPInstanceUID
+            )
+        )
+        let sourceDecoder = try Self.open(source)
+        var policy = DicomRewritePolicy(
+            actions: [:],
+            removePrivateTags: false,
+            uidValueReplacements: [oldSOPInstanceUID: newSOPInstanceUID]
+        )
+        policy.removeOverlayPlanes = false
+        policy.removeTemporalAttributes = false
+
+        let result = try DicomAnonymizer(policy: policy).rewrite(source)
+        let rewrittenDecoder = try Self.open(result.fileData)
+
+        XCTAssertEqual(rewrittenDecoder.info(for: .sopInstanceUID), newSOPInstanceUID)
+        XCTAssertEqual(
+            rewrittenDecoder.info(for: .transferSyntaxUID),
+            DicomTransferSyntax.jpegLosslessFirstOrder.rawValue
+        )
+        XCTAssertEqual(
+            try rewrittenDecoder.makeEncapsulatedPixelFrameReader().frameData(at: 0),
+            try sourceDecoder.makeEncapsulatedPixelFrameReader().frameData(at: 0)
+        )
+    }
+
     // MARK: - UID root budget
 
     func testOversizedUIDRootFailsTypedBeforeRewriting() throws {
@@ -243,6 +366,98 @@ final class DicomAnonymizerTests: XCTestCase {
         }
     }
 
+    func testDefaultPolicyRemovesTemporalAttributesRecursivelyAndRecordsPS315Markers() throws {
+        let nested = DicomDataSet(elements: [
+            DicomDataElement(tag: 0x0008_002A, vr: .DT, value: .strings(["20260722121530-0300"])),
+            DicomDataElement(tag: 0x0040_A121, vr: .DA, value: .strings(["20260722"])),
+            DicomDataElement(tag: 0x0040_A122, vr: .TM, value: .strings(["121530"])),
+            DicomDataElement(tag: 0x0040_A123, vr: .PN, value: .strings(["Reporter^Identity"])),
+            DicomDataElement(tag: 0x0040_A160, vr: .UT, value: .strings(["Patient Jane Doe has findings"]))
+        ])
+        var dataSet = Self.makeNativeDataSet(pixelBytes: Data([1, 0, 2, 0, 3, 0, 4, 0]))
+        dataSet.set(DicomDataElement(tag: DicomTag.studyDate.rawValue, vr: .DA, value: .strings(["20260722"])))
+        dataSet.set(DicomDataElement(tag: DicomTag.studyTime.rawValue, vr: .TM, value: .strings(["121530"])))
+        dataSet.set(DicomDataElement(tag: 0x0008_0201, vr: .SH, value: .strings(["-0300"])))
+        dataSet.set(DicomDataElement(
+            tag: 0x0040_A730,
+            vr: .SQ,
+            value: .sequence([DicomSequenceItem(dataSet: nested)])
+        ))
+        let result = try DicomAnonymizer().rewrite(Self.makeNativeFile(from: dataSet))
+
+        XCTAssertNil(result.dataSet.element(for: DicomTag.studyDate.rawValue))
+        XCTAssertNil(result.dataSet.element(for: DicomTag.studyTime.rawValue))
+        XCTAssertNil(result.dataSet.element(for: 0x0008_0201), "Timezone Offset From UTC must be removed")
+        let rewrittenNested = try XCTUnwrap(result.dataSet.sequenceItems(for: 0x0040_A730).first?.dataSet)
+        XCTAssertNil(rewrittenNested.element(for: 0x0008_002A))
+        XCTAssertNil(rewrittenNested.element(for: 0x0040_A121))
+        XCTAssertNil(rewrittenNested.element(for: 0x0040_A122))
+        XCTAssertNil(rewrittenNested.element(for: 0x0040_A123))
+        XCTAssertEqual(rewrittenNested.string(for: 0x0040_A160), "REDACTED")
+        XCTAssertEqual(result.dataSet.string(for: 0x0012_0062), "YES")
+        XCTAssertEqual(result.dataSet.string(for: 0x0028_0303), "REMOVED")
+        XCTAssertTrue(result.dataSet.element(for: 0x0012_0063)?.stringValues.contains {
+            $0.contains("PS3.15 Basic Confidentiality baseline")
+        } == true)
+    }
+
+    func testDefaultPolicyRemapsPS315UIDChainsAndHonorsCatalogUIDReplacements() throws {
+        let originalSOPInstanceUID = "2.25.12360001"
+        let originalStudyUID = "2.25.12360002"
+        let originalSeriesUID = "2.25.12360003"
+        let originalTrackingUID = "2.25.12360004"
+        var dataSet = Self.makeNativeDataSet(pixelBytes: Data([1, 0, 2, 0, 3, 0, 4, 0]))
+        dataSet.set(DicomDataElement(tag: 0x0008_0017, vr: .UI, value: .strings([originalTrackingUID])))
+        dataSet.set(DicomDataElement(
+            tag: 0x0008_1115,
+            vr: .SQ,
+            value: .sequence([DicomSequenceItem(dataSet: DicomDataSet(elements: [
+                DicomDataElement(tag: DicomTag.seriesInstanceUID.rawValue, vr: .UI,
+                                 value: .strings([originalSeriesUID])),
+                DicomDataElement(tag: 0x0062_0021, vr: .UI, value: .strings([originalTrackingUID])),
+                DicomDataElement(tag: DicomTag.referencedSOPInstanceUID.rawValue, vr: .UI,
+                                 value: .strings([originalSOPInstanceUID]))
+            ]))])
+        ))
+        var policy = DicomRewritePolicy.defaultAnonymization
+        policy.uidReplacementsByTag = [
+            DicomTag.studyInstanceUID.rawValue: "2.25.9001",
+            DicomTag.seriesInstanceUID.rawValue: "2.25.9002",
+            DicomTag.sopInstanceUID.rawValue: "2.25.9003"
+        ]
+
+        let result = try DicomAnonymizer(policy: policy).rewrite(Self.makeNativeFile(from: dataSet))
+
+        XCTAssertEqual(result.dataSet.string(for: .studyInstanceUID), "2.25.9001")
+        XCTAssertEqual(result.dataSet.string(for: .seriesInstanceUID), "2.25.9002")
+        XCTAssertEqual(result.dataSet.string(for: .sopInstanceUID), "2.25.9003")
+        let rewrittenNested = try XCTUnwrap(result.dataSet.sequenceItems(for: 0x0008_1115).first?.dataSet)
+        XCTAssertEqual(rewrittenNested.string(for: .seriesInstanceUID), "2.25.9002")
+        XCTAssertEqual(rewrittenNested.string(for: .referencedSOPInstanceUID), "2.25.9003")
+        let remappedTrackingUID = try XCTUnwrap(result.uidMap[originalTrackingUID])
+        XCTAssertNotEqual(remappedTrackingUID, originalTrackingUID)
+        XCTAssertEqual(result.dataSet.string(for: 0x0008_0017), remappedTrackingUID)
+        XCTAssertEqual(rewrittenNested.string(for: 0x0062_0021), remappedTrackingUID)
+        XCTAssertEqual(result.uidMap[originalStudyUID], "2.25.9001")
+    }
+
+    func testPixelRiskWarningsReflectBurnedInAnnotation() throws {
+        var declared = Self.makeNativeDataSet(pixelBytes: Data([1, 0, 2, 0, 3, 0, 4, 0]))
+        declared.set(DicomDataElement(tag: 0x0028_0301, vr: .CS, value: .strings(["YES"])))
+        let declaredResult = try DicomAnonymizer().rewrite(Self.makeNativeFile(from: declared))
+        XCTAssertEqual(declaredResult.warnings, [.burnedInAnnotationPresent])
+
+        let unknownResult = try DicomAnonymizer().rewrite(
+            Self.makeNativeFile(pixelBytes: Data([1, 0, 2, 0, 3, 0, 4, 0]))
+        )
+        XCTAssertEqual(unknownResult.warnings, [.burnedInAnnotationUnknown])
+
+        var absent = Self.makeNativeDataSet(pixelBytes: Data([1, 0, 2, 0, 3, 0, 4, 0]))
+        absent.set(DicomDataElement(tag: 0x0028_0301, vr: .CS, value: .strings(["NO"])))
+        let absentResult = try DicomAnonymizer().rewrite(Self.makeNativeFile(from: absent))
+        XCTAssertTrue(absentResult.warnings.isEmpty)
+    }
+
     // MARK: - Private tags, blocked fields, invalid inputs
 
     func testPrivateTagPolicyRemovesOrKeepsCreatorsAndElements() throws {
@@ -269,6 +484,31 @@ final class DicomAnonymizerTests: XCTestCase {
         let kept = try DicomAnonymizer(policy: keepPolicy).rewrite(source)
         XCTAssertEqual(kept.dataSet.string(for: 0x0009_0010), "CREATOR A")
         XCTAssertEqual(kept.dataSet.string(for: 0x0009_1001), "private-value")
+    }
+
+    func testOverlayPlanePolicyRemovesAllRepeatingGroupElementsByDefault() throws {
+        var dataSet = Self.makeNativeDataSet(pixelBytes: Data([1, 0, 2, 0, 3, 0, 4, 0]))
+        dataSet.set(DicomDataElement(tag: 0x6000_0010, vr: .US, value: .unsignedIntegers([2])))
+        dataSet.set(DicomDataElement(tag: 0x6000_0011, vr: .US, value: .unsignedIntegers([2])))
+        dataSet.set(DicomDataElement(tag: 0x6000_3000, vr: .OW, value: .bytes(Data([0x0F, 0x00]))))
+        dataSet.set(DicomDataElement(tag: 0x601E_3000, vr: .OW, value: .bytes(Data([0x01, 0x00]))))
+        let source = try Self.makeNativeFile(from: dataSet)
+
+        let removed = try DicomAnonymizer().rewrite(source)
+
+        XCTAssertNil(removed.dataSet.element(for: 0x6000_0010))
+        XCTAssertNil(removed.dataSet.element(for: 0x6000_0011))
+        XCTAssertNil(removed.dataSet.element(for: 0x6000_3000))
+        XCTAssertNil(removed.dataSet.element(for: 0x601E_3000))
+        XCTAssertTrue(removed.audit.contains {
+            $0.tag == 0x6000_3000 && $0.disposition == .removed && $0.note == "overlay plane element"
+        })
+
+        var keepPolicy = DicomRewritePolicy.defaultAnonymization
+        keepPolicy.removeOverlayPlanes = false
+        let kept = try DicomAnonymizer(policy: keepPolicy).rewrite(source)
+        XCTAssertNotNil(kept.dataSet.element(for: 0x6000_3000))
+        XCTAssertNotNil(kept.dataSet.element(for: 0x601E_3000))
     }
 
     func testStructuralTagsAreBlockedFromPolicyActions() throws {
@@ -317,8 +557,12 @@ final class DicomAnonymizerTests: XCTestCase {
     }
 
     private static func makeNativeFile(pixelBytes: Data) throws -> Data {
+        try makeNativeFile(from: makeNativeDataSet(pixelBytes: pixelBytes))
+    }
+
+    private static func makeNativeFile(from dataSet: DicomDataSet) throws -> Data {
         try DicomDataSetWriter.part10Data(
-            from: makeNativeDataSet(pixelBytes: pixelBytes),
+            from: dataSet,
             options: DicomPart10WriterOptions(
                 mediaStorageSOPClassUID: DicomDataSetWriter.defaultSecondaryCaptureImageStorageSOPClassUID,
                 mediaStorageSOPInstanceUID: "2.25.12360001"

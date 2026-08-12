@@ -31,7 +31,6 @@ public struct SeriesLoadProgress: Sendable {
     public let volumeInfo: DicomSeriesVolume
 }
 
-@available(macOS 10.15, iOS 13.0, *)
 extension DicomSeriesLoader {
 
     /// Asynchronously loads a DICOM series from a directory.

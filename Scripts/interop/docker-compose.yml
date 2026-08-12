@@ -9,7 +9,7 @@ services:
       DICOM_WEB_PLUGIN_ENABLED: "true"
       ORTHANC_JSON: |
         {
-          "Name": "DICOM-Swift Interop Orthanc",
+          "Name": "MTK Interop Orthanc",
           "DicomAet": "ORTHANC",
           "RemoteAccessAllowed": true,
           "AuthenticationEnabled": false,
@@ -18,8 +18,8 @@ services:
             "Root": "/dicom-web/"
           },
           "DicomModalities": {
-            "DICOMSWIFT": [
-              "DICOMSWIFT",
+            "MTKSMOKE": [
+              "MTKSMOKE",
               "host.docker.internal",
               11114
             ]
@@ -39,7 +39,7 @@ services:
       DICOM_WEB_PLUGIN_ENABLED: "true"
       ORTHANC_JSON: |
         {
-          "Name": "DICOM-Swift Interop Orthanc (auth)",
+          "Name": "MTK Interop Orthanc (auth)",
           "DicomAet": "ORTHANCAUTH",
           "RemoteAccessAllowed": true,
           "AuthenticationEnabled": true,

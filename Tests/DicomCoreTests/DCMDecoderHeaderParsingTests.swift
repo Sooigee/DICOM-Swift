@@ -12,11 +12,31 @@ final class DCMDecoderHeaderParsingTests: XCTestCase {
         XCTAssertEqual(decoder.intValue(for: .columns), 5)
     }
 
-    private func makeDicomWithUndefinedSequenceBeforeDimensions(rows: UInt16, columns: UInt16) throws -> URL {
+    func testCommandGroupLengthTagBeforeImageDataDoesNotTerminateHeaderParsing() throws {
+        let url = try makeDicomWithUndefinedSequenceBeforeDimensions(
+            rows: 3,
+            columns: 5,
+            includesCommandGroupLength: true
+        )
+        let decoder = try DCMDecoder(contentsOf: url)
+
+        XCTAssertEqual(decoder.height, 3)
+        XCTAssertEqual(decoder.width, 5)
+        XCTAssertGreaterThan(decoder.offset, 0)
+    }
+
+    private func makeDicomWithUndefinedSequenceBeforeDimensions(
+        rows: UInt16,
+        columns: UInt16,
+        includesCommandGroupLength: Bool = false
+    ) throws -> URL {
         var data = Data(repeating: 0, count: 128)
         data.append(contentsOf: "DICM".utf8)
 
         appendElement(DicomTag.transferSyntaxUID.rawValue, vr: "UI", value: paddedUID("1.2.840.10008.1.2.1"), to: &data)
+        if includesCommandGroupLength {
+            appendElement(0x00000000, vr: "UL", value: Data(repeating: 0, count: 4), to: &data)
+        }
         appendUndefinedDerivationCodeSequence(to: &data)
         appendElement(DicomTag.samplesPerPixel.rawValue, vr: "US", value: uint16(rows == 0 ? 0 : 1), to: &data)
         appendElement(DicomTag.photometricInterpretation.rawValue, vr: "CS", value: paddedASCII("MONOCHROME2"), to: &data)

@@ -4,8 +4,7 @@
 //  Protocol abstraction for logging implementations.
 //  Defines the public API for logging messages at different
 //  severity levels (debug, info, warning, error).
-//  Implementations must support iOS 13+ and macOS 12+ with
-//  appropriate fallback mechanisms for older OS versions.
+//  Implementations support the package's Apple 26 deployment floors.
 //
 //  Thread Safety:
 //
@@ -26,9 +25,8 @@ import Foundation
 /// should use internal synchronization mechanisms to ensure
 /// message ordering and consistency.
 ///
-/// **Platform Compatibility:** Implementations must support
-/// iOS 13+ and macOS 12+, using OSLog when available and
-/// falling back to NSLog on older platforms.
+/// **Platform Compatibility:** Implementations use OSLog when the module is
+/// available and fall back to NSLog on other platforms.
 public protocol LoggerProtocol {
 
     // MARK: - Logging Methods

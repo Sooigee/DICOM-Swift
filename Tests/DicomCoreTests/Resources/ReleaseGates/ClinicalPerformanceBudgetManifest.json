@@ -5,8 +5,10 @@
   "privacyPolicy": "Reports contain fixture identifiers, aggregate timings, counters, and environment data only; never patient metadata or pixel payloads.",
   "requiredStages": [
     "decode",
+    "volumeAssembly",
     "gpuUpload",
-    "progressiveFrame",
+    "mprRender",
+    "volumeRender",
     "snapshot",
     "peakMemory"
   ],
@@ -19,8 +21,15 @@
     "panCancellationLatency",
     "workAvoided",
     "cacheTransitions",
+    "firstInteractiveMPR",
+    "firstVolumeRender",
+    "finalVolumeQuality",
     "jpipLayerProgress",
     "jpipByteAccounting",
+    "jp3dArtifactSize",
+    "jp3dGeneration",
+    "jp3dColdWarmLoad",
+    "jp3dFallback",
     "cpuAndMemory",
     "metalResources",
     "copiesAndTemporaryIO",
@@ -338,10 +347,80 @@
       ],
       "budgets": [
         {
-          "stage": "progressiveFrame",
+          "stage": "mprRender",
           "metric": "p95TimeMilliseconds",
           "releaseLimit": 33.0,
           "debugLimit": 66.0
+        }
+      ]
+    },
+    {
+      "id": "optimized-jp3d-volume",
+      "component": "CoreWorkspace lossless JP3D optimized volume artifacts",
+      "fixtureID": "ct-explicit-vr-le-rescale",
+      "fixtureIDs": [
+        "ct-explicit-vr-le-rescale"
+      ],
+      "conformanceCaseIDs": [
+        "optimized-artifact-negative"
+      ],
+      "fixturePolicy": "Use the local synthetic non-PHI optimized-volume benchmark fixture.",
+      "benchmarkMode": "cold-sdk-first-call",
+      "benchmarkModes": [
+        "cold-sdk-first-call",
+        "warm-isolated",
+        "warm-sustained",
+        "fallback-path"
+      ],
+      "tiers": [
+        "nightly",
+        "release",
+        "manual-device"
+      ],
+      "backends": [
+        "jp3d-lossless",
+        "raw-volume-fallback",
+        "metal-shared-upload"
+      ],
+      "datasetSize": {
+        "rows": 512,
+        "columns": 512,
+        "frames": 64,
+        "bytesPerVoxel": 2
+      },
+      "warmupIterations": 1,
+      "benchmarkIterations": 10,
+      "benchmarkCommand": "Tools/Scripts/Performance/benchmark_optimized_volume_artifacts.sh",
+      "correctnessGate": "Decoded JP3D voxels and metadata must match the raw artifact exactly; malformed artifacts must fall back safely.",
+      "workflowMetrics": [
+        "jp3dArtifactSize",
+        "jp3dGeneration",
+        "jp3dColdWarmLoad",
+        "jp3dFallback",
+        "rawArtifactBytes",
+        "jp3dArtifactBytes",
+        "generationLatency",
+        "coldLoadLatency",
+        "warmLoadLatency",
+        "firstInteractiveMPR",
+        "firstVolumeRender",
+        "finalVolumeQuality",
+        "metalUploadLatency",
+        "peakRSS",
+        "fallbackLatency"
+      ],
+      "budgets": [
+        {
+          "stage": "volumeAssembly",
+          "metric": "meanTimeMilliseconds",
+          "releaseLimit": 600.0,
+          "debugLimit": 1200.0
+        },
+        {
+          "stage": "volumeRender",
+          "metric": "p95TimeMilliseconds",
+          "releaseLimit": 50.0,
+          "debugLimit": 100.0
         }
       ]
     }

@@ -478,7 +478,7 @@ public enum JPEGExtendedDecoder {
         let maxSample = (1 << frame.precision) - 1
         var pixels = [UInt16](repeating: 0, count: frame.width * frame.height)
 
-        var reader = BitReader(bytes: bytes, start: entropyStart)
+        let reader = BitReader(bytes: bytes, start: entropyStart)
         var dcPredictor = 0
         var restartCount = 0
         var coefficients = [Double](repeating: 0, count: 64)

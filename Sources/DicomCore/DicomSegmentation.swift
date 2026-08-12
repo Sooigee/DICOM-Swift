@@ -139,6 +139,7 @@ public struct DicomSegmentation: Equatable, Sendable {
     public let maximumFractionalValue: Int
     public let rows: Int
     public let columns: Int
+    public let referencedSeriesInstanceUIDs: [String]
     public let segments: [DicomSegment]
     public let frames: [DicomSegmentationFrame]
     public let labelmapsBySegment: [Int: DicomSegmentLabelmap]
@@ -150,6 +151,7 @@ public struct DicomSegmentation: Equatable, Sendable {
         maximumFractionalValue: Int = 255,
         rows: Int,
         columns: Int,
+        referencedSeriesInstanceUIDs: [String] = [],
         segments: [DicomSegment],
         frames: [DicomSegmentationFrame],
         labelmapsBySegment: [Int: DicomSegmentLabelmap]? = nil
@@ -160,6 +162,7 @@ public struct DicomSegmentation: Equatable, Sendable {
         self.maximumFractionalValue = maximumFractionalValue
         self.rows = rows
         self.columns = columns
+        self.referencedSeriesInstanceUIDs = referencedSeriesInstanceUIDs.compactMap(\.dicomSegNonEmptyValue)
         self.segments = segments
         self.frames = frames
         self.labelmapsBySegment = labelmapsBySegment ?? Self.makeLabelmaps(
@@ -244,6 +247,14 @@ public enum DicomSegmentationBuilder {
             sequence(.perFrameFunctionalGroupsSequence, segmentation.frames.map(frameDataSet)),
             bytes(.pixelData, vr: .OB, pixelData(from: segmentation))
         ]
+        if !segmentation.referencedSeriesInstanceUIDs.isEmpty {
+            elements.append(sequence(
+                .referencedSeriesSequence,
+                segmentation.referencedSeriesInstanceUIDs.map { uid in
+                    DicomDataSet(elements: [string(.seriesInstanceUID, vr: .UI, uid)])
+                }
+            ))
+        }
         if segmentation.segmentationType == .fractional {
             elements.append(string(
                 .segmentationFractionalType,
@@ -538,6 +549,8 @@ private enum DicomSegmentationParser {
             maximumFractionalValue: maximumFractionalValue,
             rows: rows,
             columns: columns,
+            referencedSeriesInstanceUIDs: parseItems(in: decoder, for: .referencedSeriesSequence)
+                .compactMap { $0.dataSet.string(for: .seriesInstanceUID)?.dicomSegNonEmptyValue },
             segments: segments,
             frames: frames
         )

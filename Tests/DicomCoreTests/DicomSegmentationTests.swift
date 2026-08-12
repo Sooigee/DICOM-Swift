@@ -26,6 +26,7 @@ final class DicomSegmentationTests: XCTestCase {
             segmentationType: .binary,
             rows: 2,
             columns: 2,
+            referencedSeriesInstanceUIDs: ["2.25.9000"],
             segments: [segment],
             frames: [
                 DicomSegmentationFrame(
@@ -53,6 +54,7 @@ final class DicomSegmentationTests: XCTestCase {
         XCTAssertNil(parsed.fractionalType)
         XCTAssertEqual(parsed.rows, 2)
         XCTAssertEqual(parsed.columns, 2)
+        XCTAssertEqual(parsed.referencedSeriesInstanceUIDs, ["2.25.9000"])
         XCTAssertEqual(parsed.segments, [segment])
         XCTAssertEqual(parsed.frames.map(\.segmentNumber), [1, 1])
         XCTAssertEqual(parsed.frames[0].pixelData, .binary([1, 0, 0, 1]))

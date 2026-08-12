@@ -28,6 +28,7 @@ enum DicomSequenceValueParser {
     private static let itemDelimiterTag = 0xFFFEE00D
     private static let sequenceDelimiterTag = 0xFFFEE0DD
     private static let undefinedLength = UInt32.max
+    private static let tagDictionary = DCMDictionary()
 
     static func undefinedLengthSequenceBounds(
         in data: Data,
@@ -343,6 +344,7 @@ enum DicomSequenceValueParser {
              DicomTag.planePositionSequence.rawValue,
              DicomTag.planeOrientationSequence.rawValue,
              DicomTag.pixelMeasuresSequence.rawValue,
+             DicomTag.frameVOILUTSequence.rawValue,
              DicomTag.derivationImageSequence.rawValue,
              DicomTag.sourceImageSequence.rawValue,
              DicomTag.referencedSOPSequence.rawValue,
@@ -443,7 +445,8 @@ enum DicomSequenceValueParser {
             return .FD
         case DicomTag.referencedFrameNumber.rawValue,
              DicomTag.seriesNumber.rawValue,
-             DicomTag.instanceNumber.rawValue:
+             DicomTag.instanceNumber.rawValue,
+             DicomTag.numberOfSeriesRelatedInstances.rawValue:
             return .IS
         case DicomTag.displayedAreaTopLeftHandCorner.rawValue,
              DicomTag.displayedAreaBottomRightHandCorner.rawValue:
@@ -508,6 +511,7 @@ enum DicomSequenceValueParser {
              DicomTag.imageType.rawValue,
              DicomTag.conversionType.rawValue,
              DicomTag.presentationLUTShape.rawValue,
+             DicomTag.voiLUTFunction.rawValue,
              DicomTag.valueType.rawValue,
              DicomTag.relationshipType.rawValue,
              DicomTag.continuityOfContent.rawValue,
@@ -538,6 +542,7 @@ enum DicomSequenceValueParser {
              DicomTag.decayCorrection.rawValue,
              DicomTag.correctedImage.rawValue,
              DicomTag.patientSex.rawValue,
+             DicomTag.modalitiesInStudy.rawValue,
              DicomTag.waveformOriginality.rawValue,
              DicomTag.channelStatus.rawValue,
              DicomTag.waveformSampleInterpretation.rawValue:
@@ -620,8 +625,17 @@ enum DicomSequenceValueParser {
              DicomTag.listOfMIMETypes.rawValue:
             return .LO
         default:
-            return .UN
+            return dictionaryVR(for: tag) ?? .UN
         }
+    }
+
+    /// Fallback for tags outside the curated switch above: resolves the VR from
+    /// the bundled DICOM dictionary. Without this, implicit-VR network datasets
+    /// (for example C-FIND responses) decode identifier tags as UN, whose bytes
+    /// are dropped by every string accessor.
+    private static func dictionaryVR(for tag: Int) -> DicomVR? {
+        guard let code = tagDictionary.vrCode(forTag: tag) else { return nil }
+        return DicomVR(code: code)
     }
 
     private static func value(

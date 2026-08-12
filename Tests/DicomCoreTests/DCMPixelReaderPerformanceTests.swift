@@ -277,7 +277,8 @@ final class DCMPixelReaderPerformanceTests: XCTestCase {
         XCTAssertGreaterThan(stats.hitRate, 50.0, "MONOCHROME1 inversion should reuse its temporary buffer")
     }
 
-    /// Benchmarks fused normalization and MONOCHROME1 inversion for signed pixels.
+    /// Benchmarks vectorized MONOCHROME1 inversion for signed pixels.
+    /// Tests the invertMonochrome1SignedVectorized function.
     func testMonochrome1SignedInversionPerformance() {
         let width = largeWidth
         let height = largeHeight
@@ -295,22 +296,10 @@ final class DCMPixelReaderPerformanceTests: XCTestCase {
             }
         }
 
-        let warmup = DCMPixelReader.readPixels(
-            data: testData,
-            width: width,
-            height: height,
-            bitDepth: 16,
-            samplesPerPixel: 1,
-            offset: 100,
-            pixelRepresentation: 1,
-            littleEndian: true,
-            photometricInterpretation: "MONOCHROME1"
-        )
-        XCTAssertNotNil(warmup.pixels16, "Should successfully read signed MONOCHROME1 pixels")
-        XCTAssertEqual(warmup.pixels16?.count, numPixels, "Should read all pixels")
-        XCTAssertTrue(warmup.signedImage, "Should mark as signed image")
+        let iterations = 10
+        var totalTime: CFAbsoluteTime = 0
 
-        let measurements = (0..<3).map { _ -> Double in
+        for _ in 0..<iterations {
             let start = CFAbsoluteTimeGetCurrent()
 
             // Benchmark with both signed representation and MONOCHROME1
@@ -326,23 +315,22 @@ final class DCMPixelReaderPerformanceTests: XCTestCase {
                 photometricInterpretation: "MONOCHROME1" // Triggers signed inversion
             )
 
-            let elapsedMilliseconds = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            totalTime += CFAbsoluteTimeGetCurrent() - start
 
             XCTAssertNotNil(result.pixels16, "Should successfully read signed MONOCHROME1 pixels")
             XCTAssertEqual(result.pixels16?.count, numPixels, "Should read all pixels")
             XCTAssertTrue(result.signedImage, "Should mark as signed image")
-            return elapsedMilliseconds
         }
 
-        let medianTime = measurements.sorted()[1]
-        let pixelsPerSecond = Double(numPixels) / (medianTime / 1000)
+        let avgTime = (totalTime / Double(iterations)) * 1000
+        let pixelsPerSecond = Double(numPixels) / (totalTime / Double(iterations))
 
         print("""
 
         ========== MONOCHROME1 Signed Inversion Performance ==========
         Image size: \(width)x\(height) (\(numPixels / 1_000_000)M pixels)
-        Measurements: \(measurements.map { String(format: "%.2f", $0) }.joined(separator: ", "))ms
-        Median time: \(String(format: "%.2f", medianTime))ms
+        Iterations: \(iterations)
+        Avg time: \(String(format: "%.2f", avgTime))ms
         Throughput: \(String(format: "%.2f", pixelsPerSecond / 1_000_000))M pixels/sec
         ===============================================================
 
@@ -353,7 +341,7 @@ final class DCMPixelReaderPerformanceTests: XCTestCase {
         #else
         let expectedThreshold = 100.0
         #endif
-        XCTAssertLessThan(medianTime, expectedThreshold, "Signed MONOCHROME1 should be <\(expectedThreshold)ms for 2048x2048 image")
+        XCTAssertLessThan(avgTime, expectedThreshold, "Signed MONOCHROME1 should be <\(expectedThreshold)ms for 2048x2048 image")
     }
 
     // MARK: - Standard Size Benchmarks
