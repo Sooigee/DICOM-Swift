@@ -179,11 +179,23 @@ public final class BufferPool {
     ///   - count: The number of elements needed
     /// - Returns: A buffer with capacity >= count
     ///
-    /// - Note: Buffers may be larger than requested due to bucketing.
-    ///         Always use the `count` parameter to track actual size needed.
+    /// - Note: Buffers may be larger than requested due to bucketing, but never
+    ///         smaller. Always use the `count` parameter to track actual size
+    ///         needed.
     public func acquire<T>(type: [T].Type, count: Int) -> [T] {
         let bucket = BucketSize.bucket(for: count)
         let bucketSize = bucket.rawValue
+
+        // `bucket(for:)` clamps anything above the largest bucket to `xlarge`,
+        // so a request bigger than that cannot be served from the pool: every
+        // pooled buffer holds at most `xlarge` elements, and a hit would hand
+        // back fewer elements than were asked for. Callers size their Accelerate
+        // writes by the requested count, so that shortfall is a heap overflow,
+        // not a slow path — it segfaulted on MONOCHROME1 images larger than
+        // 2048x2048, which is most full-size DR/CR X-rays. Serve those exactly
+        // and keep them out of the pool.
+        let servedFromPool = count <= bucketSize
+        let allocationCount = Swift.max(bucketSize, count)
 
         return lock.withLock {
             let poolHit: Bool
@@ -191,43 +203,43 @@ public final class BufferPool {
 
             switch T.self {
             case is UInt16.Type:
-                if !pools.uint16[bucket, default: []].isEmpty {
+                if servedFromPool, !pools.uint16[bucket, default: []].isEmpty {
                     poolHit = true
                     statsCurrentPoolSize -= 1
                     buffer = pools.uint16[bucket]!.removeLast() as! [T]
                 } else {
                     poolHit = false
-                    buffer = Array(repeating: UInt16(0), count: bucketSize) as! [T]
+                    buffer = Array(repeating: UInt16(0), count: allocationCount) as! [T]
                 }
 
             case is UInt8.Type:
-                if !pools.uint8[bucket, default: []].isEmpty {
+                if servedFromPool, !pools.uint8[bucket, default: []].isEmpty {
                     poolHit = true
                     statsCurrentPoolSize -= 1
                     buffer = pools.uint8[bucket]!.removeLast() as! [T]
                 } else {
                     poolHit = false
-                    buffer = Array(repeating: UInt8(0), count: bucketSize) as! [T]
+                    buffer = Array(repeating: UInt8(0), count: allocationCount) as! [T]
                 }
 
             case is Int16.Type:
-                if !pools.int16[bucket, default: []].isEmpty {
+                if servedFromPool, !pools.int16[bucket, default: []].isEmpty {
                     poolHit = true
                     statsCurrentPoolSize -= 1
                     buffer = pools.int16[bucket]!.removeLast() as! [T]
                 } else {
                     poolHit = false
-                    buffer = Array(repeating: Int16(0), count: bucketSize) as! [T]
+                    buffer = Array(repeating: Int16(0), count: allocationCount) as! [T]
                 }
 
             case is Float.Type:
-                if !pools.float[bucket, default: []].isEmpty {
+                if servedFromPool, !pools.float[bucket, default: []].isEmpty {
                     poolHit = true
                     statsCurrentPoolSize -= 1
                     buffer = pools.float[bucket]!.removeLast() as! [T]
                 } else {
                     poolHit = false
-                    buffer = Array(repeating: Float(0), count: bucketSize) as! [T]
+                    buffer = Array(repeating: Float(0), count: allocationCount) as! [T]
                 }
 
             default:
@@ -256,17 +268,21 @@ public final class BufferPool {
         let bucket = BucketSize.bucket(for: count)
         let bucketSize = bucket.rawValue
 
+        // Same over-large request handling as `acquire(type:count:)`.
+        let servedFromPool = count <= bucketSize
+        let allocationCount = Swift.max(bucketSize, count)
+
         return lock.withLock {
             let poolHit: Bool
             let buffer: Data
 
-            if !pools.data[bucket, default: []].isEmpty {
+            if servedFromPool, !pools.data[bucket, default: []].isEmpty {
                 poolHit = true
                 statsCurrentPoolSize -= 1
                 buffer = pools.data[bucket]!.removeLast()
             } else {
                 poolHit = false
-                buffer = Data(count: bucketSize)
+                buffer = Data(count: allocationCount)
             }
 
             // Update statistics
@@ -292,6 +308,12 @@ public final class BufferPool {
     ///         be overwritten by future users of the pool.
     public func release<T>(_ buffer: [T]) {
         guard !buffer.isEmpty else { return }
+
+        // Over-large buffers are handed out unpooled by `acquire`, so they are
+        // dropped here too: filing one under `xlarge` would let a later request
+        // for a genuinely xlarge-sized buffer retain many megabytes it will
+        // never use.
+        guard buffer.count <= BucketSize.xlarge.rawValue else { return }
 
         let bucket = BucketSize.bucket(for: buffer.count)
 
@@ -330,6 +352,9 @@ public final class BufferPool {
     /// - Parameter buffer: The Data buffer to release
     public func releaseData(_ buffer: Data) {
         guard !buffer.isEmpty else { return }
+
+        // See `release(_:)` — over-large buffers are never pooled.
+        guard buffer.count <= BucketSize.xlarge.rawValue else { return }
 
         let bucket = BucketSize.bucket(for: buffer.count)
 

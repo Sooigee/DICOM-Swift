@@ -238,13 +238,16 @@ final class BufferPoolTests: XCTestCase {
         XCTAssertEqual(buffer.count, 262144, "Should round up to medium bucket")
     }
 
-    func testOversizedRequestUsesXLargeBucket() {
-        // Request larger than 2048×2048, should use xlarge bucket
+    func testOversizedRequestIsServedExactly() {
+        // Request larger than 2048x2048. This used to be clamped to the xlarge
+        // bucket and returned short, which overflowed every caller that sized
+        // its Accelerate writes by the requested count.
         let pool = BufferPool.shared
-        let buffer = pool.acquire(type: [UInt16].self, count: 5000 * 5000)
+        let count = 5000 * 5000
+        let buffer = pool.acquire(type: [UInt16].self, count: count)
 
-        XCTAssertGreaterThanOrEqual(buffer.count, 2048 * 2048, "Should use xlarge bucket")
-        XCTAssertEqual(buffer.count, 4194304, "Should be xlarge bucket size")
+        XCTAssertGreaterThanOrEqual(buffer.count, count, "Must never return fewer elements than requested")
+        XCTAssertEqual(buffer.count, count, "Over-large requests are served exactly, not bucketed")
     }
 
     // MARK: - Type-Specific Pool Isolation Tests
@@ -749,5 +752,61 @@ final class BufferPoolTests: XCTestCase {
         )
 
         XCTAssertEqual(stats.hitRate, 0.0, accuracy: 0.1, "Hit rate should be 0% with no hits")
+    }
+
+    // MARK: - Over-large request Tests
+
+    /// 2688x2692 — the size of the DR X-ray that segfaulted in
+    /// `DCMPixelReader.invertMonochrome1Vectorized`. Anything above the
+    /// `xlarge` bucket (2048x2048 = 4_194_304) used to come back short.
+    private static let oversizedCount = 2688 * 2692
+
+    func testAcquireNeverReturnsFewerElementsThanRequested() {
+        let count = Self.oversizedCount
+        let buffer = BufferPool.shared.acquire(type: [Float].self, count: count)
+        XCTAssertGreaterThanOrEqual(buffer.count, count,
+                                    "acquire must never hand back fewer elements than requested")
+    }
+
+    func testAcquireOversizedForEveryPooledElementType() {
+        let count = Self.oversizedCount
+        XCTAssertGreaterThanOrEqual(BufferPool.shared.acquire(type: [UInt16].self, count: count).count, count)
+        XCTAssertGreaterThanOrEqual(BufferPool.shared.acquire(type: [UInt8].self, count: count).count, count)
+        XCTAssertGreaterThanOrEqual(BufferPool.shared.acquire(type: [Int16].self, count: count).count, count)
+        XCTAssertGreaterThanOrEqual(BufferPool.shared.acquire(type: [Float].self, count: count).count, count)
+    }
+
+    func testAcquireDataNeverReturnsFewerBytesThanRequested() {
+        let count = Self.oversizedCount
+        let buffer = BufferPool.shared.acquireData(count: count)
+        XCTAssertGreaterThanOrEqual(buffer.count, count,
+                                    "acquireData must never hand back fewer bytes than requested")
+    }
+
+    /// A pooled `xlarge` buffer must never be handed to an over-large request:
+    /// that was the exact path that overflowed, since the pool is warm by the
+    /// time a large study is opened.
+    func testWarmPoolStillSatisfiesOversizedRequest() {
+        let xlarge = 4_194_304
+        BufferPool.shared.release(BufferPool.shared.acquire(type: [Float].self, count: xlarge))
+
+        let buffer = BufferPool.shared.acquire(type: [Float].self, count: Self.oversizedCount)
+        XCTAssertGreaterThanOrEqual(buffer.count, Self.oversizedCount,
+                                    "a warm xlarge pool must not satisfy a larger request")
+    }
+
+    /// Over-large buffers are handed out unpooled, so releasing one must not
+    /// park megabytes in the xlarge bucket for a later, smaller caller.
+    func testReleasingOversizedBufferDoesNotGrowThePool() {
+        let before = BufferPool.shared.statistics.currentPoolSize
+        BufferPool.shared.release([Float](repeating: 0, count: Self.oversizedCount))
+        XCTAssertEqual(BufferPool.shared.statistics.currentPoolSize, before,
+                       "over-large buffers must not be pooled")
+    }
+
+    /// Normal-sized requests keep the bucketing behaviour they always had.
+    func testAcquireStillRoundsUpToBucketSize() {
+        let buffer = BufferPool.shared.acquire(type: [Float].self, count: 300)
+        XCTAssertEqual(buffer.count, 65536, "small requests should still round up to the small bucket")
     }
 }
