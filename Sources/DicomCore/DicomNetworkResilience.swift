@@ -15,6 +15,29 @@ public enum DicomTLSSecurityProfile: String, Codable, Equatable, Hashable, Senda
     case authenticatedUnencryptedRetired
 }
 
+/// A peer certificate chain observed during a TLS handshake, captured so a
+/// caller that rejected the peer can show the operator what it saw and, if the
+/// operator approves it, pin it for subsequent connections.
+///
+/// Private certificate authorities are the norm for PACS deployments, so a
+/// chain that fails ordinary trust evaluation is an expected outcome rather
+/// than an error to hide: the digest here is what `pinnedCertificateSHA256`
+/// consumes.
+public struct DicomTLSPeerIdentity: Codable, Equatable, Hashable, Sendable {
+    /// DER-encoded certificates, leaf first.
+    public var certificateChain: [Data]
+    /// Lowercase hex SHA-256 of the leaf certificate's DER encoding.
+    public var leafSHA256: String
+    /// Why ordinary trust evaluation rejected the chain.
+    public var reason: String
+
+    public init(certificateChain: [Data], leafSHA256: String, reason: String) {
+        self.certificateChain = certificateChain
+        self.leafSHA256 = leafSHA256
+        self.reason = reason
+    }
+}
+
 public struct DicomTLSMaterial: Codable, Equatable, Sendable {
     public var certificatePath: String?
     public var privateKeyPath: String?
@@ -37,15 +60,41 @@ public struct DicomTLSConfiguration: Codable, Equatable, Sendable {
     public var serverName: String?
     public var material: DicomTLSMaterial?
     public var securityProfile: DicomTLSSecurityProfile
+    /// Lowercase hex SHA-256 digests of DER-encoded peer certificates that are
+    /// trusted outright.
+    ///
+    /// A pin *is* the trust decision: a peer whose leaf digest appears here is
+    /// accepted without chain building, anchor evaluation, or the platform's
+    /// TLS server policy. That is what makes a self-signed or privately-issued
+    /// PACS certificate usable without installing its CA, and it also means a
+    /// pinned certificate is accepted for its full stated lifetime rather than
+    /// the 398 days Apple's server policy caps unpinned certificates at.
+    /// Expiry, hostname, and issuer are all subsumed by the digest match.
+    public var pinnedCertificateSHA256: Set<String>
 
     public init(mode: DicomTLSMode = .disabled,
                 serverName: String? = nil,
                 material: DicomTLSMaterial? = nil,
-                securityProfile: DicomTLSSecurityProfile = .none) {
+                securityProfile: DicomTLSSecurityProfile = .none,
+                pinnedCertificateSHA256: Set<String> = []) {
         self.mode = mode
         self.serverName = serverName
         self.material = material
         self.securityProfile = securityProfile
+        self.pinnedCertificateSHA256 = Set(pinnedCertificateSHA256.map { $0.lowercased() })
+    }
+
+    /// Decoded explicitly so that configurations encoded before pinning
+    /// existed still decode, with no pins.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decode(DicomTLSMode.self, forKey: .mode)
+        serverName = try container.decodeIfPresent(String.self, forKey: .serverName)
+        material = try container.decodeIfPresent(DicomTLSMaterial.self, forKey: .material)
+        securityProfile = try container.decodeIfPresent(DicomTLSSecurityProfile.self,
+                                                        forKey: .securityProfile) ?? .none
+        let pins = try container.decodeIfPresent(Set<String>.self, forKey: .pinnedCertificateSHA256) ?? []
+        pinnedCertificateSHA256 = Set(pins.map { $0.lowercased() })
     }
 
     public static let disabled = DicomTLSConfiguration()

@@ -22,6 +22,10 @@ public enum DicomNetworkError: Error, Equatable, Sendable {
     case networkUnavailable(String)
     case tlsConfigurationInvalid(String)
     case tlsTrustEvaluationFailed(String)
+    /// The peer's certificate chain failed trust evaluation and was not
+    /// pinned. Carries what was presented so the caller can offer the operator
+    /// a trust decision instead of a bare failure.
+    case tlsPeerNotTrusted(DicomTLSPeerIdentity)
     case circuitBreakerOpen(String)
     case operationCancelled(String)
     /// User identity negotiation was configured without TLS.
@@ -71,6 +75,8 @@ extension DicomNetworkError: LocalizedError {
             return "DIMSE network transport is unavailable: \(reason)."
         case .tlsConfigurationInvalid(let reason):
             return "DIMSE TLS configuration is invalid: \(reason)."
+        case .tlsPeerNotTrusted(let peer):
+            return "The DICOM server's certificate is not trusted: \(peer.reason)"
         case .tlsTrustEvaluationFailed(let reason):
             return "DIMSE TLS trust evaluation failed: \(reason)."
         case .circuitBreakerOpen(let operation):

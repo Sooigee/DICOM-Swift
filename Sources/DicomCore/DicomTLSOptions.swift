@@ -5,6 +5,9 @@ import Network
 #if canImport(Security)
 import Security
 #endif
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
 #if canImport(Network)
 enum DicomTLSRole: Sendable {
@@ -15,6 +18,37 @@ enum DicomTLSRole: Sendable {
 struct DicomPreparedNetworkParameters {
     let parameters: NWParameters
     let tlsContext: DicomAppliedTLSContext?
+    /// Non-nil whenever a verify block is installed; holds the chain that was
+    /// rejected, if one was.
+    let tlsRejectionRecorder: DicomTLSRejectionRecorder?
+
+    init(parameters: NWParameters,
+         tlsContext: DicomAppliedTLSContext?,
+         tlsRejectionRecorder: DicomTLSRejectionRecorder? = nil) {
+        self.parameters = parameters
+        self.tlsContext = tlsContext
+        self.tlsRejectionRecorder = tlsRejectionRecorder
+    }
+}
+
+/// Thread-safe slot holding the peer chain that most recently failed trust
+/// evaluation on a connection, so the transport can turn an opaque handshake
+/// failure into a chain the caller can show and pin.
+final class DicomTLSRejectionRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var identity: DicomTLSPeerIdentity?
+
+    func record(_ identity: DicomTLSPeerIdentity) {
+        lock.lock()
+        self.identity = identity
+        lock.unlock()
+    }
+
+    var recorded: DicomTLSPeerIdentity? {
+        lock.lock()
+        defer { lock.unlock() }
+        return identity
+    }
 }
 
 final class DicomAppliedTLSContext {
@@ -90,6 +124,36 @@ final class DicomAppliedTLSContext {
     #endif
 }
 
+#if canImport(Security)
+/// DER-encoded peer certificates, leaf first.
+///
+/// `SecTrustCopyCertificateChain` only exists from macOS 12 / iOS 15, so the
+/// deprecated index accessor stays as the fallback for the package's older
+/// deployment targets.
+func peerCertificateChain(from trust: SecTrust) -> [Data] {
+    if #available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *) {
+        guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate] else { return [] }
+        return chain.map { SecCertificateCopyData($0) as Data }
+    }
+    var chain: [Data] = []
+    for index in 0..<SecTrustGetCertificateCount(trust) {
+        guard let certificate = SecTrustGetCertificateAtIndex(trust, index) else { continue }
+        chain.append(SecCertificateCopyData(certificate) as Data)
+    }
+    return chain
+}
+
+/// Lowercase hex SHA-256, the form `DicomTLSConfiguration.pinnedCertificateSHA256`
+/// stores and `openssl x509 -fingerprint -sha256` prints.
+func sha256Hex(of data: Data) -> String {
+    #if canImport(CryptoKit)
+    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    #else
+    return ""
+    #endif
+}
+#endif
+
 enum DicomTLSOptionsFactory {
     static func preparedParameters(for tls: DicomTLSConfiguration, role: DicomTLSRole) throws -> DicomPreparedNetworkParameters {
         switch tls.mode {
@@ -99,7 +163,8 @@ enum DicomTLSOptionsFactory {
             let prepared = try preparedTLSOptions(for: tls, role: role)
             return DicomPreparedNetworkParameters(
                 parameters: NWParameters(tls: prepared.options, tcp: NWProtocolTCP.Options()),
-                tlsContext: prepared.context
+                tlsContext: prepared.context,
+                tlsRejectionRecorder: prepared.recorder
             )
         }
     }
@@ -118,7 +183,7 @@ enum DicomTLSOptionsFactory {
     private static func preparedTLSOptions(
         for tls: DicomTLSConfiguration,
         role: DicomTLSRole
-    ) throws -> (options: NWProtocolTLS.Options, context: DicomAppliedTLSContext) {
+    ) throws -> (options: NWProtocolTLS.Options, context: DicomAppliedTLSContext, recorder: DicomTLSRejectionRecorder?) {
         #if canImport(Security)
         let options = NWProtocolTLS.Options()
         if role == .client, let serverName = tls.serverName {
@@ -159,27 +224,76 @@ enum DicomTLSOptionsFactory {
         }
         #endif
 
-        if !trustedCertificates.isEmpty {
+        // A client always gets a verify block, even with no anchors and no
+        // pins: rejecting a peer is only half the job, the caller also needs
+        // the chain that was rejected so it can put a trust decision to the
+        // operator. Servers keep the original behaviour of verifying only when
+        // anchors were supplied.
+        let pins = tls.pinnedCertificateSHA256
+        let recorder: DicomTLSRejectionRecorder?
+        if role == .client || !trustedCertificates.isEmpty {
+            let rejectionRecorder = DicomTLSRejectionRecorder()
+            recorder = rejectionRecorder
             let queue = DispatchQueue(label: "DicomTLSOptionsFactory.trust")
             let serverName = tls.serverName
             sec_protocol_options_set_verify_block(options.securityProtocolOptions, { _, secTrust, complete in
                 let trust = sec_trust_copy_ref(secTrust).takeRetainedValue()
-                let anchors = trustedCertificates as CFArray
-                let setAnchorsStatus = SecTrustSetAnchorCertificates(trust, anchors)
-                let setOnlyStatus = SecTrustSetAnchorCertificatesOnly(trust, true)
-                let policy = role == .client
-                    ? SecPolicyCreateSSL(true, serverName as CFString?)
-                    : SecPolicyCreateBasicX509()
-                let setPolicyStatus = SecTrustSetPolicies(trust, policy)
-                guard setAnchorsStatus == errSecSuccess,
-                      setOnlyStatus == errSecSuccess,
-                      setPolicyStatus == errSecSuccess else {
+                let derChain = peerCertificateChain(from: trust)
+                let leafDigest = derChain.first.map(sha256Hex(of:)) ?? ""
+
+                // A pin is the whole trust decision. Chain building, anchors,
+                // and the platform's server policy are all bypassed, which is
+                // deliberate: the operator already confirmed this exact
+                // certificate, and privately-issued PACS certificates
+                // routinely fail that policy on validity period alone.
+                if !pins.isEmpty {
+                    if !leafDigest.isEmpty, pins.contains(leafDigest) {
+                        complete(true)
+                        return
+                    }
+                    rejectionRecorder.record(DicomTLSPeerIdentity(
+                        certificateChain: derChain,
+                        leafSHA256: leafDigest,
+                        reason: "The server presented a certificate that does not match the one previously trusted for it."
+                    ))
                     complete(false)
                     return
                 }
+
+                if !trustedCertificates.isEmpty {
+                    let setAnchorsStatus = SecTrustSetAnchorCertificates(trust, trustedCertificates as CFArray)
+                    let setOnlyStatus = SecTrustSetAnchorCertificatesOnly(trust, true)
+                    let policy = role == .client
+                        ? SecPolicyCreateSSL(true, serverName as CFString?)
+                        : SecPolicyCreateBasicX509()
+                    let setPolicyStatus = SecTrustSetPolicies(trust, policy)
+                    guard setAnchorsStatus == errSecSuccess,
+                          setOnlyStatus == errSecSuccess,
+                          setPolicyStatus == errSecSuccess else {
+                        rejectionRecorder.record(DicomTLSPeerIdentity(
+                            certificateChain: derChain,
+                            leafSHA256: leafDigest,
+                            reason: "The supplied trust anchors could not be applied to the server's certificate."
+                        ))
+                        complete(false)
+                        return
+                    }
+                }
+
                 var error: CFError?
-                complete(SecTrustEvaluateWithError(trust, &error))
+                if SecTrustEvaluateWithError(trust, &error) {
+                    complete(true)
+                    return
+                }
+                let reason = (error as Error?).map { ($0 as NSError).localizedDescription }
+                    ?? "The certificate could not be verified."
+                rejectionRecorder.record(DicomTLSPeerIdentity(certificateChain: derChain,
+                                                              leafSHA256: leafDigest,
+                                                              reason: reason))
+                complete(false)
             }, queue)
+        } else {
+            recorder = nil
         }
 
         #if os(macOS)
@@ -206,7 +320,7 @@ enum DicomTLSOptionsFactory {
             protocolIdentity: nil
         )
         #endif
-        return (options, context)
+        return (options, context, recorder)
         #else
         throw DicomNetworkError.tlsConfigurationInvalid(
             "Security.framework is not available for TLS configuration."

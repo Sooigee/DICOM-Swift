@@ -1207,6 +1207,8 @@ private extension DicomDIMSEServiceSCU {
             return "Network transport unavailable."
         case .tlsConfigurationInvalid:
             return "TLS configuration invalid."
+        case .tlsPeerNotTrusted:
+            return "Server certificate not trusted."
         case .tlsTrustEvaluationFailed:
             return "TLS trust evaluation failed."
         case .circuitBreakerOpen:
@@ -1619,6 +1621,18 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
     private let timeout: TimeInterval
     private let tlsContext: DicomAppliedTLSContext?
     private let tlsSetupError: Error?
+    private let tlsRejectionRecorder: DicomTLSRejectionRecorder?
+    private let stateLock = NSLock()
+    /// The failure that ended the connection, if it has ended. Once set, every
+    /// in-flight and subsequent operation fails with it rather than waiting out
+    /// its own timeout.
+    private var terminalError: Error?
+    private var lastWaitingError: Error?
+    /// Semaphores of operations currently blocked on the connection, woken as a
+    /// group when it fails.
+    private var waiters: [DispatchSemaphore] = []
+    /// Signalled when the connection becomes ready; only `open()` waits on it.
+    private var openSemaphore: DispatchSemaphore?
 
     public init(host: String,
                 port: UInt16,
@@ -1638,6 +1652,7 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
                                        using: prepared.parameters)
         self.timeout = timeout
         self.tlsContext = prepared.tlsContext
+        self.tlsRejectionRecorder = prepared.tlsRejectionRecorder
     }
 
     public init(acceptedConnection: NWConnection, timeout: TimeInterval = 10) {
@@ -1645,39 +1660,123 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
         self.timeout = timeout
         self.tlsContext = nil
         self.tlsSetupError = nil
+        self.tlsRejectionRecorder = nil
     }
 
     public func open() throws {
         if let tlsSetupError {
             throw tlsSetupError
         }
+        installStateHandler()
         let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<Void, Error>?
-        connection.stateUpdateHandler = { state in
+        registerWaiter(semaphore)
+        defer { removeWaiter(semaphore) }
+        openSemaphore = semaphore
+        connection.start(queue: queue)
+        if semaphore.wait(timeout: .now() + timeout) != .success {
+            // A `.waiting` reason that never resolved explains the stall far
+            // better than the bare timeout it turned into.
+            throw mapped(currentWaitingError ?? DicomNetworkError.networkTimeout("opening TCP connection"))
+        }
+        if let error = currentTerminalError {
+            throw mapped(error)
+        }
+    }
+
+    /// Watches the connection for the whole of its life, not just while
+    /// opening. Network.framework reports a peer's post-handshake rejection —
+    /// a TLS 1.3 server refusing a client that sent no certificate, say — as a
+    /// connection state change rather than as an error on the send or receive
+    /// in flight, so without this the operation sits until its timeout and
+    /// reports a stall instead of the refusal that caused it.
+    private func installStateHandler() {
+        connection.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
             switch state {
             case .ready:
-                result = .success(())
-                semaphore.signal()
+                self.openSemaphore?.signal()
             case .failed(let error):
-                result = .failure(error)
-                semaphore.signal()
+                self.recordTerminal(error)
+            case .cancelled:
+                self.recordTerminal(DicomNetworkError.operationCancelled("TCP connection"))
+            case .waiting(let error):
+                // `.waiting` is not terminal to Network.framework, which keeps
+                // retrying behind the scenes. A rejected certificate never
+                // becomes acceptable by waiting, so treat that as final;
+                // anything else may still recover, so only remember it.
+                if case .tls = error {
+                    self.recordTerminal(error)
+                } else {
+                    self.recordWaiting(error)
+                }
             default:
                 break
             }
         }
-        connection.start(queue: queue)
-        guard semaphore.wait(timeout: .now() + timeout) == .success else {
-            throw DicomNetworkError.networkTimeout("opening TCP connection")
+    }
+
+    private func recordTerminal(_ error: Error) {
+        stateLock.lock()
+        if terminalError == nil {
+            terminalError = error
         }
-        try result?.get()
+        let pending = waiters
+        stateLock.unlock()
+        pending.forEach { $0.signal() }
+    }
+
+    private func recordWaiting(_ error: Error) {
+        stateLock.lock()
+        lastWaitingError = error
+        stateLock.unlock()
+    }
+
+    private func registerWaiter(_ semaphore: DispatchSemaphore) {
+        stateLock.lock()
+        waiters.append(semaphore)
+        let failed = terminalError != nil
+        stateLock.unlock()
+        if failed {
+            semaphore.signal()
+        }
+    }
+
+    private func removeWaiter(_ semaphore: DispatchSemaphore) {
+        stateLock.lock()
+        if let index = waiters.firstIndex(where: { $0 === semaphore }) {
+            waiters.remove(at: index)
+        }
+        stateLock.unlock()
+    }
+
+    private var currentTerminalError: Error? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return terminalError
+    }
+
+    private var currentWaitingError: Error? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return lastWaitingError
+    }
+
+    /// Replaces an opaque handshake failure with the chain that caused it, so
+    /// the caller can show the operator what was presented and offer to pin it.
+    private func mapped(_ error: Error) -> Error {
+        guard let identity = tlsRejectionRecorder?.recorded else { return error }
+        return DicomNetworkError.tlsPeerNotTrusted(identity)
     }
 
     public func startAcceptedConnection() {
+        installStateHandler()
         connection.start(queue: queue)
     }
 
     public func writePDU(_ data: Data) throws {
         let semaphore = DispatchSemaphore(value: 0)
+        registerWaiter(semaphore)
+        defer { removeWaiter(semaphore) }
         var result: Result<Void, Error>?
         connection.send(content: data, completion: .contentProcessed { error in
             if let error {
@@ -1687,8 +1786,11 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
             }
             semaphore.signal()
         })
-        guard semaphore.wait(timeout: .now() + timeout) == .success else {
-            throw DicomNetworkError.networkTimeout("writing PDU")
+        if semaphore.wait(timeout: .now() + timeout) != .success {
+            throw currentTerminalError ?? DicomNetworkError.networkTimeout("writing PDU")
+        }
+        if let error = currentTerminalError, result == nil {
+            throw error
         }
         try result?.get()
     }
@@ -1727,6 +1829,8 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
 
     private func receive(maximumLength: Int) throws -> Data {
         let semaphore = DispatchSemaphore(value: 0)
+        registerWaiter(semaphore)
+        defer { removeWaiter(semaphore) }
         var result: Result<Data, Error>?
         connection.receive(minimumIncompleteLength: 1,
                            maximumLength: maximumLength) { content, _, isComplete, error in
@@ -1741,8 +1845,11 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
             }
             semaphore.signal()
         }
-        guard semaphore.wait(timeout: .now() + timeout) == .success else {
-            throw DicomNetworkError.networkTimeout("reading PDU")
+        if semaphore.wait(timeout: .now() + timeout) != .success {
+            throw currentTerminalError ?? DicomNetworkError.networkTimeout("reading PDU")
+        }
+        if let error = currentTerminalError, result == nil {
+            throw error
         }
         return try result?.get() ?? Data()
     }
