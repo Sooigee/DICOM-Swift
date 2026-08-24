@@ -54,7 +54,7 @@ final class DicomTLSPinningTests: XCTestCase {
                        "The DICOM server's certificate is not trusted: “Example CA” certificate is not trusted")
     }
 
-#if canImport(Network) && canImport(Security)
+#if canImport(Network) && canImport(Security) && os(macOS)
     func testSHA256HexMatchesKnownDigest() {
         // Digest of the empty input, so the encoding is pinned without a fixture.
         XCTAssertEqual(sha256Hex(of: Data()),
@@ -77,6 +77,27 @@ final class DicomTLSPinningTests: XCTestCase {
             role: .client
         )
         XCTAssertNotNil(prepared.tlsRejectionRecorder)
+    }
+
+    func testClientIdentityLoadsFromPEMFiles() throws {
+        let material = try DicomTLSTestMaterial.write()
+        defer { try? FileManager.default.removeItem(at: material.directory) }
+
+        let identity = try DicomTLSClientIdentity.load(certificatePath: material.serverCertificatePath,
+                                                       privateKeyPath: material.serverPrivateKeyPath)
+        var certificate: SecCertificate?
+        XCTAssertEqual(SecIdentityCopyCertificate(identity.identity, &certificate), errSecSuccess)
+        XCTAssertNotNil(certificate)
+    }
+
+    func testClientIdentityRejectsAMismatchedKey() throws {
+        let material = try DicomTLSTestMaterial.write()
+        defer { try? FileManager.default.removeItem(at: material.directory) }
+
+        // A certificate the key does not belong to cannot form an identity.
+        XCTAssertThrowsError(try DicomTLSClientIdentity.load(
+            certificatePath: material.wrongCACertificatePath,
+            privateKeyPath: material.serverPrivateKeyPath))
     }
 
     func testDisabledTLSPreparesNoRecorder() throws {

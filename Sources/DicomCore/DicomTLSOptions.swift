@@ -154,6 +154,46 @@ func sha256Hex(of data: Data) -> String {
 }
 #endif
 
+#if canImport(Security) && os(macOS)
+/// A TLS client identity loaded from PEM files, for callers that have to hand
+/// one to an API outside this package — `URLSession`'s authentication
+/// challenge, say, which wants a `SecIdentity` rather than the file paths
+/// `DicomTLSMaterial` takes.
+///
+/// The identity is only valid while the throwaway keychain backing it exists,
+/// which is why the two are kept together: release this object and the
+/// identity stops working.
+public final class DicomTLSClientIdentity {
+
+    public let identity: SecIdentity
+    /// Any intermediates that came with the certificate, leaf excluded.
+    public let certificates: [SecCertificate]
+    private let keychain: DicomTemporaryKeychain
+
+    fileprivate init(identity: SecIdentity, certificates: [SecCertificate], keychain: DicomTemporaryKeychain) {
+        self.identity = identity
+        self.certificates = certificates
+        self.keychain = keychain
+    }
+
+    /// Loads a client identity from a PEM certificate and its PEM private key.
+    ///
+    /// Throws `DicomNetworkError.tlsConfigurationInvalid` when either file is
+    /// unreadable, holds the wrong kind of material, or the key does not match
+    /// the certificate.
+    public static func load(certificatePath: String, privateKeyPath: String) throws -> DicomTLSClientIdentity {
+        let material = DicomTLSMaterial(certificatePath: certificatePath, privateKeyPath: privateKeyPath)
+        let loaded = try DicomTLSOptionsFactory.clientIdentity(from: material)
+        guard let identity = loaded.identity, let keychain = loaded.keychain else {
+            throw DicomNetworkError.tlsConfigurationInvalid("TLS client identity could not be created.")
+        }
+        return DicomTLSClientIdentity(identity: identity,
+                                      certificates: loaded.certificates,
+                                      keychain: keychain)
+    }
+}
+#endif
+
 enum DicomTLSOptionsFactory {
     static func preparedParameters(for tls: DicomTLSConfiguration, role: DicomTLSRole) throws -> DicomPreparedNetworkParameters {
         switch tls.mode {
@@ -202,7 +242,7 @@ enum DicomTLSOptionsFactory {
         )
 
         #if os(macOS)
-        let localIdentity = try localIdentityIfNeeded(from: tls.material)
+        let localIdentity = try clientIdentity(from: tls.material)
         var protocolIdentity: sec_identity_t?
         if let identity = localIdentity.identity {
             if localIdentity.certificates.isEmpty {
@@ -398,7 +438,7 @@ enum DicomTLSOptionsFactory {
     #endif
 
     #if canImport(Security) && os(macOS)
-    private static func localIdentityIfNeeded(
+    static func clientIdentity(
         from material: DicomTLSMaterial?
     ) throws -> (identity: SecIdentity?, certificates: [SecCertificate], keychain: DicomTemporaryKeychain?) {
         guard let material else { return (nil, [], nil) }

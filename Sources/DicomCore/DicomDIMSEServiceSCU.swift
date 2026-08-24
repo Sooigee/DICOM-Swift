@@ -1704,7 +1704,7 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
                 // retrying behind the scenes. A rejected certificate never
                 // becomes acceptable by waiting, so treat that as final;
                 // anything else may still recover, so only remember it.
-                if case .tls = error {
+                if Self.isFinal(error) {
                     self.recordTerminal(error)
                 } else {
                     self.recordWaiting(error)
@@ -1712,6 +1712,26 @@ public final class DicomTCPAssociationTransport: DicomCancellableAssociationTran
             default:
                 break
             }
+        }
+    }
+
+    /// Whether a `.waiting` reason will still be true however long the wait.
+    ///
+    /// Network.framework treats `.waiting` as recoverable and keeps retrying
+    /// behind the scenes, which suits a long-lived connection but not a
+    /// blocking call with a fixed budget. A rejected certificate and a refused
+    /// connection are both settled answers — something replied and said no —
+    /// so waiting out the timeout only delays the same result and reports it
+    /// as a stall. Anything else, an interface still coming up for instance,
+    /// may genuinely resolve and is left to retry.
+    private static func isFinal(_ error: NWError) -> Bool {
+        switch error {
+        case .tls:
+            return true
+        case .posix(let code):
+            return code == .ECONNREFUSED
+        default:
+            return false
         }
     }
 
